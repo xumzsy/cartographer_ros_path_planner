@@ -137,9 +137,7 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
     int x = local_x/submap_texture->resolution;
     int y = local_y/submap_texture->resolution;
     const int intensity = pixels.intensity.at(y*width+x);
-    const int alpha = pixels.alpha.at(y*width+x);
-    const int color = alpha*256+intensity;
-    const int value = (1.0-color/255.0)*100;
+    const int value = (1.0-intensity/255.0)*100;
     if(alpha==0 && intensity==0){
         std::cout<<"Not Observed"<<std::endl;
         return false;
@@ -149,13 +147,18 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
 
     std::ofstream f ("example2.txt");
     {
-        for(int j=height-1;j>=0;j--){
-            for(int i=0;i<width;i++){
+        // transform back into map frame using script
+        // (i,j) (slice)  <-->  -relative_x/resolution-i, -relative_y/resolution-j
+        for(int i=0;i<height;i++){
+            for(int j=0;j<width;j++){
                 //std::cout<<pixels.intensity[j*width+i] + 32*pixels.alpha[j*width+i]<<" ";
-                f << pixels.intensity[j*width+i] + 32*pixels.alpha[j*width+i]<<" ";
+                //
+                if(pixels.alpha[i*width+j]!=0 && pixels.intensity[i*width+j]==0){
+                    f << width - j << "," << height-i<< std::endl;
+                }
             }
-            //std::cout<<std::endl;
-            f<<std::endl;
+            // std::cout<<std::endl;
+            // f<<std::endl;
         }
     }
     f.close();
