@@ -62,6 +62,16 @@ private:
         distance(d) {};
     };
     
+    struct SubmapGrid{
+        SubmapIndex submap_index;
+        double resolution;
+        double x0;
+        double y0;
+        int width;
+        int height;
+        int data [];
+    };
+    
     // Add a submap into road map
     void AddRoadMapEntry(const SubmapIndex submap_index);
     
@@ -74,6 +84,9 @@ private:
     ::ros::ServiceClient submap_query_client_ GUARDED_BY(mutex_);
     // SubmapList
     std::map<SubmapIndex,cartographer_ros_msgs::SubmapEntry> submap_ GUARDED_BY(mutex_);
+    
+    // SubmapGrid
+    std::map<SubmapIndex, SubmapGrid> submap_grid_ GUARDED_BY(mutex_);
     
     // Road map to store the connectivity of submaps and corresponding path
     std::map<SubmapIndex,std::map<SubmapIndex,SubmapConnectState>> road_map_ GUARDED_BY(mutex_);

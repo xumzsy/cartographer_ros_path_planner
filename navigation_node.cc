@@ -14,19 +14,21 @@
 #include <string>
 #include <set>
 
-#include "geometry_msgs/Pose.h"
-#include "geometry_msgs/Point.h"
-#include "geometry_msgs/PointStamped.h"
 #include "Eigen/Core"
 #include "Eigen/Geometry"
+#include "cairo/cairo.h"
 #include "cartographer/common/mutex.h"
 #include "cartographer/common/port.h"
+#include "cartographer/io/image.h"
+#include "cartographer/io/submap_painter.h"
 #include "cartographer/mapping/id.h"
 #include "cartographer/transform/rigid_transform.h"
+#include "cartographer_ros/msg_conversion.h"
+#include "cartographer_ros/node_constants.h"
 #include "cartographer_ros/submap.h"
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
-#include "nav_msgs/OccupancyGrid.h"
+
 #include "ros/ros.h"
 
 
@@ -69,6 +71,7 @@ const int kFinishVersion = 180;
 const int kProbabilityGridWidth = 100;
 const int kProbabilityGridHeight = 100;
 const int kOccupyThreshhold = 64;
+const float kOccupyGridResolution = 0.05;
 const float kDistance2ThresholdForAdding = 5.0;
 const float kDistance2ThresholdForUpdating = 1.0;
 const float kRotationThresholdForUpdating = 1.0;
@@ -104,64 +107,104 @@ SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Pose& pose) const 
 // TOTEST
 bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use x & y in 2D case
                  const SubmapIndex submap_index) {
-    auto& submap_entry = submap_.find(submap_index)->second;
-
-   
+    ::cartographer::common::MutexLocker locker(&mutex_);
+    // If it's painted submap
+    if(submap_grid_.count(submap_index)==1){
+        auto& submap_grid = submap_grid_[submap_index];
+        int x = (point.x - submap_grid.x0) / submap_grid.resolution;
+        int y = (point.y - submap_grid.y0) / submap_grid.resolution;
+        if(x>=0&&x<submap_grid.width&&y>=0&&y<submap_grid.height){
+            int val = submap_grid.data.at(y*submap_grid.width+x);
+            return val == -1 ? false : val < kOccupyThreshhold;
+        } else{
+            std::cout<<"Point is out of submap range"<<std::endl;
+            return false;
+        }
+    }
+    
+    // Otherwise first fetch the submaptexture
+    SubmapEntry& submap_entry = submap_.[submap_index];
     ::cartographer_ros_msgs::SubmapQuery query;
     query.request.trajectory_id = submap_entry.trajectory_id;
     query.request.submap_index = submap_entry.submap_index;
-    if(!submap_query_client_.call(query)) std::cout<<(query.response.status.message)<<std::endl;
-    auto submap_texture = query.response.textures.begin();
-    const int width = submap_texture->width;
-    const int height = submap_texture->height;
-
-    // unpack cells
-    const std::string compressed_cells(submap_texture->cells.begin(),submap_texture->cells.end());
-    auto pixels = ::cartographer::io::UnpackTextureData(compressed_cells,width,height);
-
-    //TODO: submap_texture->slice_pose * submap_entry.pose;
-    geometry_msgs::Pose submap_slice_pose = PoseMultiply2D(submap_entry.pose,submap_texture->slice_pose);
-   
-
-    // Future: using cartographer::transform
-    // calculate pose in submap_id
-    float relative_x = point.x - submap_slice_pose.position.x;
-    float relative_y = point.y - submap_slice_pose.position.y;
-    float cos_theta = 1 - 2*submap_slice_pose.orientation.z;
-    float sin_theta = 2 * submap_slice_pose.orientation.w * submap_slice_pose.orientation.z;
-    float local_x = relative_x * cos_theta + relative_y * sin_theta;
-    float local_y = relative_y * cos_theta - relative_x * sin_theta;
-    local_x *= -1;
-    local_y *= -1;
-
-    int x = local_x/submap_texture->resolution;
-    int y = local_y/submap_texture->resolution;
-    const int intensity = pixels.intensity.at(y*width+x);
-    const int value = (1.0-intensity/255.0)*100;
-    if(alpha==0 && intensity==0){
-        std::cout<<"Not Observed"<<std::endl;
+    if(!submap_query_client_.call(query)){
+        std::cout<<(query.response.status.message)<<std::endl;
         return false;
     }
-    std::cout<<local_x<<","<<local_y<<std::endl;
-    std::cout<<x<<","<<y<<":"<<value<<std::endl;
-
-    std::ofstream f ("example2.txt");
-    {
-        // transform back into map frame using script
-        // (i,j) (slice)  <-->  -relative_x/resolution-i, -relative_y/resolution-j
-        for(int i=0;i<height;i++){
-            for(int j=0;j<width;j++){
-                //std::cout<<pixels.intensity[j*width+i] + 32*pixels.alpha[j*width+i]<<" ";
-                //
-                if(pixels.alpha[i*width+j]!=0 && pixels.intensity[i*width+j]==0){
-                    f << width - j << "," << height-i<< std::endl;
-                }
-            }
-            // std::cout<<std::endl;
-            // f<<std::endl;
+    auto submap_texture = query.response.textures.begin();
+    
+    // use fake map to do it (map only contain one element)
+    const SubmapId id{submap_entry.trajectory_id, submap_entry.submap_index};
+    std::map<SubmapId, SubmapSlice> fake_submap_slices;
+    ::cartographer::io::SubmapSlice& submap_slice = fake_submap_slices[id];
+    
+    submap_slice.pose = ToRigid3d(submap_entry.pose);
+    submap_slice.metadata_version = submap_entry.submap_version;
+    
+    // push fetched texture to slice and draw the texture
+    submap_slice.version = submap_texture->version;
+    submap_slice.width = submap_texture->width;
+    submap_slice.height = submap_texture->height;
+    submap_slice.slice_pose = submap_texture->slice_pose;
+    submap_slice.resolution = submap_texture->resolution;
+    submap_slice.cairo_data.clear();
+    submap_slice.surface = ::cartographer::io::DrawTexture(
+        submap_texture->pixels.intensity, submap_texture->pixels.alpha,
+        submap_texture->width, submap_texture->height,
+        &submap_slice.cairo_data);
+   
+    
+    // Paint
+    auto painted_slices = PaintSubmapSlices(fake_submap_slices_, kOccupyGridResolution);
+    
+    // Get occupied grid
+    auto& submap_grid = submap_grid_[submap_index];
+    const Eigen::Array2f& origin = painted_slices.origin;
+    cairo_surface_t* surface = painted_slices.surface.get();
+    const int width = cairo_image_surface_get_width(surface);
+    const int height = cairo_image_surface_get_height(surface);
+    
+    submap_grid.submap_index = submap_index;
+    submap_grid.resolution = kOccupyGridResolution;
+    submap_grid.width = width;
+    submap_grid.height = height;
+    submap_grid.x0 = origin.x() * kOccupyGridResolution;
+    submap_grid.y0 = origin.y() * kOccupyGridResolution;
+    
+    //
+    
+    std::cout<< "Origin Position  :  "<<submap_grid.x0 << "," << submap_grid.y0 << std::endl;
+    std::ofstream fout ("img.txt");
+    
+    const uint32_t* pixel_data = reinterpret_cast<uint32_t*>(cairo_image_surface_get_data(surface));
+    submap_grid.data.reserve(width*height);
+    for(int y=0;y<height;y++){
+        for(int x=0;x<width;x++){
+            const uint32_t packed = pixel_data[y*width+x];
+            const unsigned char color = packed >> 16;
+            const unsigned char observed = packed >> 8;
+            const int value =
+            observed == 0
+            ? -1
+            : ::cartographer::common::RoundToInt((1. - color / 255.) * 100.);
+            submap_grid.data[y*width+x] = col;
+            fout<< col <<" ";
         }
+        fout << std::endl;
     }
-    f.close();
+    fout.close();
+    
+    // Check is local free
+    const int x = (point.x - submap_grid.x0) / submap_grid.resolution;
+    const int y = (point.y - submap_grid.y0) / submap_grid.resolution;
+    if(x>=0&&x<submap_grid.width&&y>=0&&y<submap_grid.height){
+        const int val = submap_grid.data.at(y*submap_grid.width+x);
+        return val == -1 ? false : val < kOccupyThreshhold;
+    } else{
+        std::cout<<"Point is out of submap range"<<std::endl;
+        return false;
+    }
+    
     return value < kOccupyThreshhold;
     
 }
@@ -214,12 +257,6 @@ void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
 void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::ConstPtr& msg){
     ::cartographer::common::MutexLocker locker(&mutex_);
     
-    // Keep track of submap IDs that don't appear in the message anymore.
-    //std::set<SubmapIndex> submap_indexs_to_delete;
-    //for (const auto& pair : submap_) {
-    //    submap_indexs_to_delete.insert(pair.first);
-    //}
-    
     // check if submap has been changed
     for(auto& submap_entry:msg->submap){
         SubmapIndex submap_index = submap_entry.submap_index;
@@ -241,11 +278,6 @@ void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::Cons
         }
     }
     
-    // Delete all submaps that didn't appear in the message.
-    //for (const auto& idx : submap_indexs_to_delete) {
-    //    submap_.erase(idx);
-    //}
-    //PrintState();
 }
 
 /**
