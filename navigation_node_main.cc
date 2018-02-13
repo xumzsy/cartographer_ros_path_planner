@@ -1,12 +1,12 @@
 #include "ros/ros.h"
-#include "cartographer_ros_msgs/SubmapEntry.h"
-#include "cartographer_ros_msgs/SubmapList.h"
-#include "cartographer_ros_msgs/SubmapQuery.h"
 #include "navigation_node.h"
+#include <iostream>
 
 int main(int argc, char** argv){
   ::ros::init(argc, argv, "cartographer_navigation_node");
-  cartographer_ros_navigation::Node node;
+  ::ros::start();
+  cartographer_ros::cartographer_ros_navigation::NavigationNode node;
   ::ros::spin();
-
+  ::ros::shutdown();
+  return 0;
 }

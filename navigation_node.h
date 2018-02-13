@@ -12,10 +12,15 @@
 
 #include "ros/ros.h"
 #include "geometry_msgs/Pose.h"
+#include "geometry_msgs/Point.h"
+#include "geometry_msgs/PointStamped.h"
+#include "cartographer/common/mutex.h"
+#include "cartographer/common/port.h"
 #include "cartographer_ros_msgs/SubmapEntry.h"
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
 
+namespace cartographer_ros{
 namespace cartographer_ros_navigation {
 
 using SubmapIndex = int;
@@ -34,12 +39,12 @@ public:
     SubmapIndex CloestSubmap(const geometry_msgs::Pose& pose) const;
     
     // Return whether a point is free in local frame
-    bool IsLocalFree(const geometry_msgs::Pose& pose,
-                     const SubmapIndex submap_index) const;
+    bool IsLocalFree(const geometry_msgs::Point& point,
+                     const SubmapIndex submap_index);
     
     // Return a free path from starting position to end postion using RRT
-    Path PlanPathRRT(geometry_msgs::Pose& start,
-                     geometry_msgs::Pose& end) const;
+    Path PlanPathRRT(const geometry_msgs::Pose& start,
+                     const geometry_msgs::Pose& end) const;
     
     // print out the current state for testing and debugging
     void PrintState();
@@ -50,6 +55,7 @@ private:
         SubmapIndex end_submap_index;
         float distance;
         Path path;
+        SubmapConnectState(){};
         SubmapConnectState(SubmapIndex start_index, SubmapIndex end_index, float d) :
         start_submap_index(start_index),
         end_submap_index(end_index),
@@ -60,20 +66,24 @@ private:
     void AddRoadMapEntry(const SubmapIndex submap_index);
     
     // Update roadmap every time received submapList
-    void UpdateRoadMap(const cartographer_ros_msgs::SubmapList::ConstPtr& msg){};
+    void UpdateRoadMap(const cartographer_ros_msgs::SubmapList::ConstPtr& msg);
     
-    ::ros::NodeHandle node_handle_;
-    ::ros::Subscriber submap_list_subscriber_;
-    ::ros::ServiceClient submap_query_client_;
-    
+    ::cartographer::common::Mutex mutex_;
+    ::ros::NodeHandle node_handle_ GUARDED_BY(mutex_); 
+    ::ros::Subscriber submap_list_subscriber_ GUARDED_BY(mutex_);
+    ::ros::ServiceClient submap_query_client_ GUARDED_BY(mutex_);
     // SubmapList
-    std::map<SubmapIndex,cartographer_ros_msgs::SubmapEntry> submap_;
+    std::map<SubmapIndex,cartographer_ros_msgs::SubmapEntry> submap_ GUARDED_BY(mutex_);
     
     // Road map to store the connectivity of submaps and corresponding path
-    std::map<SubmapIndex,std::map<SubmapIndex,SubmapConnectState>> road_map_;
+    std::map<SubmapIndex,std::map<SubmapIndex,SubmapConnectState>> road_map_ GUARDED_BY(mutex_);
     
+
+    // For test
+    ::ros::Subscriber clicked_point_subscriber_ GUARDED_BY(mutex_);
+    void IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg);
 };
     
 } // namespace cartographer_ros_navigation
-
+} // namespace cartographer_ros
 #endif /* node_hpp */
