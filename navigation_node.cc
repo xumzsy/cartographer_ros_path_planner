@@ -7,7 +7,6 @@
 #include "navigation_node.h"
 
 #include <iostream>
-#include <fstream>
 
 #include <map>
 #include <vector>
@@ -36,6 +35,10 @@ namespace cartographer_ros{
 namespace cartographer_ros_navigation {
 namespace{
     
+using ::cartographer::io::PaintSubmapSlicesResult;
+using ::cartographer::io::SubmapSlice;
+using ::cartographer::mapping::SubmapId;
+
 inline float Distance2BetweenPose(const geometry_msgs::Pose& pose1,
                                   const geometry_msgs::Pose& pose2){
     return (pose1.position.x-pose2.position.x)*(pose1.position.x-pose2.position.x)+
@@ -47,7 +50,8 @@ inline float RotationBetweenPose(const geometry_msgs::Pose& pose1,
                                       const geometry_msgs::Pose& pose2){
     return abs(pose1.orientation.z-pose1.orientation.z);
 }
- 
+
+/** 
 geometry_msgs::Pose PoseMultiply2D(geometry_msgs::Pose& pose1, geometry_msgs::Pose& pose2){
     // result = pose1 * pose2
     geometry_msgs::Pose result;
@@ -63,7 +67,7 @@ geometry_msgs::Pose PoseMultiply2D(geometry_msgs::Pose& pose1, geometry_msgs::Po
     result.position.z = 0.0;
     return result;
 }
-    
+  */  
 const char kSubmapListTopicName [] = "/submap_list";
 const char kSubmapQueryServiceName [] = "/submap_query";
 const int kMaxNeighborNum = 3;
@@ -104,7 +108,6 @@ SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Pose& pose) const 
 }
 
 // TODO: Return whether a point is free in local frame
-// TOTEST
 bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use x & y in 2D case
                  const SubmapIndex submap_index) {
     ::cartographer::common::MutexLocker locker(&mutex_);
@@ -123,18 +126,13 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
     }
     
     // Otherwise first fetch the submaptexture
-    SubmapEntry& submap_entry = submap_.[submap_index];
-    ::cartographer_ros_msgs::SubmapQuery query;
-    query.request.trajectory_id = submap_entry.trajectory_id;
-    query.request.submap_index = submap_entry.submap_index;
-    if(!submap_query_client_.call(query)){
-        std::cout<<(query.response.status.message)<<std::endl;
-        return false;
-    }
-    auto submap_texture = query.response.textures.begin();
+    cartographer_ros_msgs::SubmapEntry& submap_entry = submap_[submap_index];
+    const SubmapId id{submap_entry.trajectory_id, submap_entry.submap_index};
+
+    auto fetched_textures = ::cartographer_ros::FetchSubmapTextures(id, &submap_query_client_);
+    const auto submap_texture = fetched_textures->textures.begin();
     
     // use fake map to do it (map only contain one element)
-    const SubmapId id{submap_entry.trajectory_id, submap_entry.submap_index};
     std::map<SubmapId, SubmapSlice> fake_submap_slices;
     ::cartographer::io::SubmapSlice& submap_slice = fake_submap_slices[id];
     
@@ -142,7 +140,7 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
     submap_slice.metadata_version = submap_entry.submap_version;
     
     // push fetched texture to slice and draw the texture
-    submap_slice.version = submap_texture->version;
+    submap_slice.version = fetched_textures->version;
     submap_slice.width = submap_texture->width;
     submap_slice.height = submap_texture->height;
     submap_slice.slice_pose = submap_texture->slice_pose;
@@ -155,7 +153,7 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
    
     
     // Paint
-    auto painted_slices = PaintSubmapSlices(fake_submap_slices_, kOccupyGridResolution);
+    auto painted_slices = cartographer::io::PaintSubmapSlices(fake_submap_slices, kOccupyGridResolution);
     
     // Get occupied grid
     auto& submap_grid = submap_grid_[submap_index];
@@ -168,31 +166,23 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
     submap_grid.resolution = kOccupyGridResolution;
     submap_grid.width = width;
     submap_grid.height = height;
-    submap_grid.x0 = origin.x() * kOccupyGridResolution;
-    submap_grid.y0 = origin.y() * kOccupyGridResolution;
-    
-    //
-    
-    std::cout<< "Origin Position  :  "<<submap_grid.x0 << "," << submap_grid.y0 << std::endl;
-    std::ofstream fout ("img.txt");
+    submap_grid.x0 = - origin.x() * kOccupyGridResolution;
+    submap_grid.y0 =  (origin.y() - height) * kOccupyGridResolution;
     
     const uint32_t* pixel_data = reinterpret_cast<uint32_t*>(cairo_image_surface_get_data(surface));
     submap_grid.data.reserve(width*height);
     for(int y=0;y<height;y++){
         for(int x=0;x<width;x++){
-            const uint32_t packed = pixel_data[y*width+x];
+            const uint32_t packed = pixel_data[(height-y-1)*width+x];
             const unsigned char color = packed >> 16;
             const unsigned char observed = packed >> 8;
             const int value =
             observed == 0
             ? -1
             : ::cartographer::common::RoundToInt((1. - color / 255.) * 100.);
-            submap_grid.data[y*width+x] = col;
-            fout<< col <<" ";
+            submap_grid.data.push_back(value);
         }
-        fout << std::endl;
     }
-    fout.close();
     
     // Check is local free
     const int x = (point.x - submap_grid.x0) / submap_grid.resolution;
@@ -203,10 +193,7 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
     } else{
         std::cout<<"Point is out of submap range"<<std::endl;
         return false;
-    }
-    
-    return value < kOccupyThreshhold;
-    
+    }    
 }
     
     
@@ -230,7 +217,9 @@ void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
         if(other_submap_entry.submap_index==submap_entry.submap_index) continue;
         
         float distance2 = Distance2BetweenPose(submap_entry.pose,other_submap_entry.pose);
-        if(distance2<kDistance2ThresholdForUpdating){
+        if(distance2<kDistance2ThresholdForUpdating || 
+            other_submap_entry.submap_index-submap_entry.submap_index==1 ||
+            other_submap_entry.submap_index-submap_entry.submap_index==-1){
             // TODO: Try to connect these two submap
             // use RRT to connect these two submap
             Path path = PlanPathRRT(submap_entry.pose,other_submap_entry.pose);
@@ -277,7 +266,7 @@ void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::Cons
             }
         }
     }
-    
+    PrintState();
 }
 
 /**

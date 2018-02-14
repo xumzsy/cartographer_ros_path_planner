@@ -69,7 +69,7 @@ private:
         double y0;
         int width;
         int height;
-        int data [];
+        std::vector<int> data;
     };
     
     // Add a submap into road map
