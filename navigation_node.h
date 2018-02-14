@@ -24,7 +24,7 @@ namespace cartographer_ros{
 namespace cartographer_ros_navigation {
 
 using SubmapIndex = int;
-using Path = std::vector<geometry_msgs::Pose>;
+using Path = std::vector<geometry_msgs::Point>;
     
 // Node to provide navigation for cartographer
 class NavigationNode{
@@ -38,13 +38,17 @@ public:
     // Return the cloest SubmapIndex if pose is free in this submap
     SubmapIndex CloestSubmap(const geometry_msgs::Pose& pose) const;
     
-    // Return whether a point is free in local frame
-    bool IsLocalFree(const geometry_msgs::Point& point,
+    // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
+    int IsLocalFree(const geometry_msgs::Point& point,
                      const SubmapIndex submap_index);
     
     // Return a free path from starting position to end postion using RRT
-    Path PlanPathRRT(const geometry_msgs::Pose& start,
-                     const geometry_msgs::Pose& end) const;
+    Path PlanPathRRT(const geometry_msgs::Point& start,
+                     const geometry_msgs::Point& end);
+    
+    // Return a free path between submaps' origin
+    Path PlanPathRRT(const SubmapIndex start_idx,
+                     const SubmapIndex end_idx);
     
     // print out the current state for testing and debugging
     void PrintState();
@@ -55,6 +59,7 @@ private:
         SubmapIndex end_submap_index;
         float distance;
         Path path;
+        
         SubmapConnectState(){};
         SubmapConnectState(SubmapIndex start_index, SubmapIndex end_index, float d) :
         start_submap_index(start_index),

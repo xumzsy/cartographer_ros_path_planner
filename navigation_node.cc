@@ -46,9 +46,30 @@ inline float Distance2BetweenPose(const geometry_msgs::Pose& pose1,
     /*+(pose1.position.z-pose2.position.z)*(pose1.position.z-pose2.position.z)*/;
 }
     
+inline float Distance2BetweenPoint(const geometry_msgs::Point& point1,
+                                        const geometry_msgs::Point& point2){
+    return (point1.x-point2.x)*(point1.x-point2.x) + (point1.y-point2.y)*(point1.y-point2.y);
+}
+    
 inline float RotationBetweenPose(const geometry_msgs::Pose& pose1,
-                                      const geometry_msgs::Pose& pose2){
+                                 const geometry_msgs::Pose& pose2){
     return abs(pose1.orientation.z-pose1.orientation.z);
+}
+    
+geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
+    geometry_msgs::Point sum;
+    sum.x = a.x + b.x;
+    sum.y = a.y + b.y;
+    sum.z = a.z + b.z;
+    return sum;
+}
+    
+geometry_msgs::Point operator*(float a, const geometry_msgs::Point& b){
+    geometry_msgs::Point product;
+    product.x = a * b.x;
+    product.y = a * b.y;
+    product.z = a * b.z;
+    return product;
 }
 
 /** 
@@ -107,25 +128,26 @@ SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Pose& pose) const 
     return cloest_submap;
 }
 
-// TODO: Return whether a point is free in local frame
-bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use x & y in 2D case
-                 const SubmapIndex submap_index) {
+// Return whether a point is free in a submap
+int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use x & y in 2D case
+                                 const SubmapIndex submap_index) {
     ::cartographer::common::MutexLocker locker(&mutex_);
-    // If it's painted submap
+    // If submap_grid exists, look up the grid
     if(submap_grid_.count(submap_index)==1){
         auto& submap_grid = submap_grid_[submap_index];
         int x = (point.x - submap_grid.x0) / submap_grid.resolution;
         int y = (point.y - submap_grid.y0) / submap_grid.resolution;
         if(x>=0&&x<submap_grid.width&&y>=0&&y<submap_grid.height){
             int val = submap_grid.data.at(y*submap_grid.width+x);
-            return val == -1 ? false : val < kOccupyThreshhold;
+            return val;
         } else{
             std::cout<<"Point is out of submap range"<<std::endl;
-            return false;
+            return -1;
         }
     }
     
-    // Otherwise first fetch the submaptexture
+    // Otherwise create the grid
+    // first fetch the submaptexture
     cartographer_ros_msgs::SubmapEntry& submap_entry = submap_[submap_index];
     const SubmapId id{submap_entry.trajectory_id, submap_entry.submap_index};
 
@@ -152,10 +174,10 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
         &submap_slice.cairo_data);
    
     
-    // Paint
+    // Paint the texture
     auto painted_slices = cartographer::io::PaintSubmapSlices(fake_submap_slices, kOccupyGridResolution);
     
-    // Get occupied grid
+    // Convert painted surface into occupied grid
     auto& submap_grid = submap_grid_[submap_index];
     const Eigen::Array2f& origin = painted_slices.origin;
     cairo_surface_t* surface = painted_slices.surface.get();
@@ -184,23 +206,59 @@ bool NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only us
         }
     }
     
-    // Check is local free
+    // Check the particular point
     const int x = (point.x - submap_grid.x0) / submap_grid.resolution;
     const int y = (point.y - submap_grid.y0) / submap_grid.resolution;
     if(x>=0&&x<submap_grid.width&&y>=0&&y<submap_grid.height){
         const int val = submap_grid.data.at(y*submap_grid.width+x);
-        return val == -1 ? false : val < kOccupyThreshhold;
+        return val;
     } else{
         std::cout<<"Point is out of submap range"<<std::endl;
-        return false;
+        return -1;;
     }    
 }
     
     
 // TODO: Return a free path from starting position to end postion using RRT
-Path NavigationNode::PlanPathRRT(const geometry_msgs::Pose& start,
-                                const geometry_msgs::Pose& end) const {
+Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start,
+                                 const geometry_msgs::Point& end) {
     return {start,end};
+}
+
+// Return a path bewteen origins of two connecting submaps
+Path NavigationNode::PlanPathRRT(SubmapIndex start_idx,
+                                 SubmapIndex end_idx){
+    const auto start_point = submap_[start_idx].pose.position;
+    const auto end_point = submap_[end_idx].pose.position;
+    vector<SubmapIndex> submap_indexs = {start_idx,end_idx};
+    // Naively check the straight line between two points
+    if(IsPathLocalFree(start_point,end_point,submap_indexs)){
+        return {start_point,end_point};
+    }
+    
+}
+    
+//
+    
+bool NavigationNode::IsPathLocalFree(const geometry_msgs::Point& start,
+                                     const geometry_msgs::Point& end,
+                                     vector<SubmapIndex>& submap_indexs){
+    float distance2 = Distance2BetweenPoint(start,end);
+    float step = kOccupyGridResolution / distance2;
+    for(float i=0;i<=1;i+=step){
+        geometry_msgs::Point point = (1.0-i) * start + i * end;
+        bool is_free = false;
+        for(auto submap_index:submap_indexs){
+            int val = IsLocalFree(point, submap_index);
+            if(val>=kOccupyThreshhold) return false;
+            if(val!=-1){
+                is_free = true;
+                break;
+            }
+        }
+        if(!is_free) return false;
+    }
+    return true;
 }
     
 // add new entry to road map
@@ -222,7 +280,7 @@ void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
             other_submap_entry.submap_index-submap_entry.submap_index==-1){
             // TODO: Try to connect these two submap
             // use RRT to connect these two submap
-            Path path = PlanPathRRT(submap_entry.pose,other_submap_entry.pose);
+            Path path = PlanPathRRT(submap_entry.submap_index,other_submap_entry.submap_index);
             if(path.empty()) continue;
             
             // add into road_map
