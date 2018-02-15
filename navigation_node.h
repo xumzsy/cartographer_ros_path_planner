@@ -50,6 +50,23 @@ public:
     Path PlanPathRRT(const SubmapIndex start_idx,
                      const SubmapIndex end_idx);
     
+    // Functions for RRT
+    // Rapid Random Tree Node
+    struct RRTreeNode{
+        geometry_msgs::Point point;
+        RRTreeNode* parent_node;
+        std::vector<RRTreeNode*> children_node;
+        
+        RRTreeNode(){};
+        RRTreeNode(geometry_msgs::Point p) : point = p {previous_node=nullptr;children_node.clear();}
+    }
+    
+    geometry_msgs::Point RandomFreePoint(std::vector<SubmapIndex>& submap_indexes);
+    RRTreeNode* NearestRRTreeNode(RRTreeNode* root, RRTreeNode* target);
+    bool IsPathLocalFree(const geometry_msgs::Point& start,
+                         const geometry_msgs::Point& end,
+                         std::vector<SubmapIndex>& submap_indexs);
+    
     // print out the current state for testing and debugging
     void PrintState();
     
@@ -87,6 +104,7 @@ private:
     ::ros::NodeHandle node_handle_ GUARDED_BY(mutex_); 
     ::ros::Subscriber submap_list_subscriber_ GUARDED_BY(mutex_);
     ::ros::ServiceClient submap_query_client_ GUARDED_BY(mutex_);
+    
     // SubmapList
     std::map<SubmapIndex,cartographer_ros_msgs::SubmapEntry> submap_ GUARDED_BY(mutex_);
     
