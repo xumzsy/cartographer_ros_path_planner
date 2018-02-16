@@ -29,6 +29,19 @@ using Path = std::vector<geometry_msgs::Point>;
 // Node to provide navigation for cartographer
 class NavigationNode{
 public:
+    // Rapid Random Tree Node
+    struct RRTreeNode{
+        geometry_msgs::Point point;
+        RRTreeNode* parent_node;
+        std::vector<RRTreeNode*> children_node;
+        
+        RRTreeNode(){};
+        RRTreeNode(geometry_msgs::Point p) : point = p {previous_node=nullptr;children_node.clear();}
+    }
+    bool operator ()(pair<SubmapIndex,float>& a, pair<SubmapIndex,float>& b){
+        return a.second > b.second;
+    }
+    
     NavigationNode();
     ~NavigationNode(){};
     
@@ -36,7 +49,7 @@ public:
     NavigationNode& operator=(const NavigationNode&) = delete;
     
     // Return the cloest SubmapIndex if pose is free in this submap
-    SubmapIndex CloestSubmap(const geometry_msgs::Pose& pose) const;
+    SubmapIndex CloestSubmap(const geometry_msgs::Point& point);
     
     // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
     int IsLocalFree(const geometry_msgs::Point& point,
@@ -47,19 +60,18 @@ public:
                      const geometry_msgs::Point& end);
     
     // Return a free path between submaps' origin
-    Path PlanPathRRT(const SubmapIndex start_idx,
-                     const SubmapIndex end_idx);
+    Path PlanPathRRT(SubmapIndex start_idx,
+                     SubmapIndex end_idx);
     
+    // Returan a path connecting two remote submaps
+    Path ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx);
+    
+    // connecting two points in given submaps
+    Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
+                          const geometry_msgs::Point& end_point,
+                          const std::vector<SubmapIndex> submap_indexs)
     // Functions for RRT
-    // Rapid Random Tree Node
-    struct RRTreeNode{
-        geometry_msgs::Point point;
-        RRTreeNode* parent_node;
-        std::vector<RRTreeNode*> children_node;
-        
-        RRTreeNode(){};
-        RRTreeNode(geometry_msgs::Point p) : point = p {previous_node=nullptr;children_node.clear();}
-    }
+    
     
     geometry_msgs::Point RandomFreePoint(std::vector<SubmapIndex>& submap_indexes);
     RRTreeNode* NearestRRTreeNode(RRTreeNode* root, RRTreeNode* target);
@@ -69,6 +81,7 @@ public:
     
     // print out the current state for testing and debugging
     void PrintState();
+    void AddDisplayPath(Path path);
     
 private:
     struct SubmapConnectState{
@@ -94,6 +107,9 @@ private:
         std::vector<int> data;
     };
     
+    // Add a submap grid into submap_grid_
+    void AddSubmapGrid(SubmapIndex submap_index);
+    
     // Add a submap into road map
     void AddRoadMapEntry(const SubmapIndex submap_index);
     
@@ -116,8 +132,14 @@ private:
     
 
     // For test
+    nav_msgs::Path path_to_display_;
+    AddDisplayPath(Path path);
+    ::ros::WallTimer path_publisher_timer_;
     ::ros::Subscriber clicked_point_subscriber_ GUARDED_BY(mutex_);
+    ::ros::Publisher path_publisher_;
+    void PublishPath(const ::ros::WallTimerEvent& timer_event);
     void IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg);
+    void NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg);
 };
     
 } // namespace cartographer_ros_navigation

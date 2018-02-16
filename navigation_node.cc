@@ -13,6 +13,7 @@
 #include <map>
 #include <vector>
 #include <queue>
+#include <priority_queue>
 #include <string>
 #include <set>
 
@@ -31,6 +32,7 @@
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
 
+#include "nav_msgs/Path.h"
 #include "ros/ros.h"
 
 
@@ -42,6 +44,23 @@ using ::cartographer::io::PaintSubmapSlicesResult;
 using ::cartographer::io::SubmapSlice;
 using ::cartographer::mapping::SubmapId;
 
+const char kSubmapListTopicName [] = "/submap_list";
+const char kSubmapQueryServiceName [] = "/submap_query";
+const int kMaxNeighborNum = 3;
+const int kFinishVersion = 180;
+const int kProbabilityGridWidth = 100;
+const int kProbabilityGridHeight = 100;
+const int kOccupyThreshhold = 64;
+const int kMaxRRTNodeNum = 100;
+const int kStepToCheckReachEndPoint = 5;
+const float kOccupyGridResolution = 0.05;
+const float kDistance2ThresholdForAdding = 5.0;
+const float kDistance2ThresholdForUpdating = 1.0;
+const float kRotationThresholdForUpdating = 1.0;
+const float kProbabilityGridResolution = 0.05;
+const float kProbabilityOfChooseEndPoint = 0.2;
+    
+    
 inline float Distance2BetweenPose(const geometry_msgs::Pose& pose1,
                                   const geometry_msgs::Pose& pose2){
     return (pose1.position.x-pose2.position.x)*(pose1.position.x-pose2.position.x)+
@@ -50,13 +69,17 @@ inline float Distance2BetweenPose(const geometry_msgs::Pose& pose1,
 }
     
 inline float Distance2BetweenPoint(const geometry_msgs::Point& point1,
-                                        const geometry_msgs::Point& point2){
+                                   const geometry_msgs::Point& point2){
     return (point1.x-point2.x)*(point1.x-point2.x) + (point1.y-point2.y)*(point1.y-point2.y);
 }
     
 inline float RotationBetweenPose(const geometry_msgs::Pose& pose1,
                                  const geometry_msgs::Pose& pose2){
     return abs(pose1.orientation.z-pose1.orientation.z);
+}
+
+inline bool IsValueFree(int val){
+    return val>=0 && val<kOccupyThreshhold;
 }
     
 geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
@@ -92,21 +115,7 @@ geometry_msgs::Pose PoseMultiply2D(geometry_msgs::Pose& pose1, geometry_msgs::Po
     return result;
 }
   */  
-const char kSubmapListTopicName [] = "/submap_list";
-const char kSubmapQueryServiceName [] = "/submap_query";
-const int kMaxNeighborNum = 3;
-const int kFinishVersion = 180;
-const int kProbabilityGridWidth = 100;
-const int kProbabilityGridHeight = 100;
-const int kOccupyThreshhold = 64;
-const int kMaxRRTNodeNum = 100;
-const int kStepToCheckReachEndPoint = 5;
-const float kOccupyGridResolution = 0.05;
-const float kDistance2ThresholdForAdding = 5.0;
-const float kDistance2ThresholdForUpdating = 1.0;
-const float kRotationThresholdForUpdating = 1.0;
-const float kProbabilityGridResolution = 0.05;
-const float kProbabilityOfChooseEndPoint = 0.2;
+
 } // namespace
     
 // constructor
@@ -116,15 +125,19 @@ NavigationNode::NavigationNode(){
     submap_query_client_ = node_handle_.serviceClient<cartographer_ros_msgs::SubmapQuery>(kSubmapQueryServiceName);
 
     // For test
-    clicked_point_subscriber_ = node_handle_.subscribe<geometry_msgs::PointStamped>("/clicked_point",1,&NavigationNode::IsClickedPointFree, this);
+    clicked_point_subscriber_ = node_handle_.subscribe<geometry_msgs::PointStamped>("/clicked_point",1,&NavigationNode::NavigateToClickedPoint, this);
+    path_publisher_ = node_handle_.advertise<::nav_msgs::Path>("/test_path", 10);
+    path_publisher_timer_ = node_handle_.createWallTimer(::ros::wallDuration(0.1), &NavigationNode::PublishPath, this);
 }
 
 // Return the cloest SubmapID if pose is free in this submap
-SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Pose& pose) const {
+SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Point& point) {
     float min_distance = FLT_MAX;
     SubmapIndex cloest_submap = -1;
     for(auto& submap:submap_){
-        float distance2 = Distance2BetweenPose(submap.second.pose,pose);
+        int val = IsLocalFree(point, submap.first);
+        if(!IsValueFree(val)) continue;
+        float distance2 = Distance2BetweenPoint(submap.second.pose.position,point);
         if(distance2<min_distance){
             min_distance = distance2;
             cloest_submap = submap.first;
@@ -231,13 +244,84 @@ int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use
     }    
 }
     
-    
+
 // TODO: Return a free path from starting position to end postion using RRT
-Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start,
-                                 const geometry_msgs::Point& end) {
-    return {start,end};
+Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
+                                 const geometry_msgs::Point& end_point) {
+    Path path;
+    SubmapIndex start_submap_index = CloestSubmap(start_point);
+    SubmapIndex end_submap_index = CloestSubmap(end_point);
+    // check
+    if(start_submap_index<0 || end_submap_index<0){
+        std::cout<<"goal is not free!"<<std::endl;
+        return {};
+    }
+    // connecting start to start_submap
+    auto startpath = LocalPlanPathRRT(start_point,submap_[start_submap_index].pose.position,
+                                    std::vector<SubmapIndex> ({start_submap_index}));
+    if(!startpath.empty()){
+        path.insert(path.end(),startpath.begin(),startpath.end());
+    } else{
+        return {};
+    }
+    // connecting start_submap to end_submap (graph search)
+    auto midpath = ConnectingSubmap(start_submap_index,end_submap_index);
+    if(!midpath.empty()){
+        path.insert(path.end(),midpath.begin(),midpath.end());
+    } else{
+        return {};
+    }
+    
+    // connecting end_submap to end point
+    auto endpath = LocalPlanPathRRT(submap_[end_submap_index].pose.position,end_point,
+                                      std::vector<SubmapIndex> ({start_submap_index}));
+    if(!endpath.empty()){
+        path.insert(path.end(),endpath.begin(),endpath.end());
+    } else{
+        return {};
+    }
+    AddDisplayPath(path);
+    return path;
+    
 }
 
+
+Path NavigationNode::ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx){
+    const auto& start_point = submap_[start_idx].pose.position;
+    std::priority_queue<std::pair<SubmapIndex,float>,
+                        std::vector<std::pair<SubmapIndex,float>>,
+                        this> submap_to_visit;
+    for(auto& submap:submap_){
+        float distance2 = Distance2BetweenPoint(start_point,submap.second.pose.point);
+        submap_to_visit.emplace(submap.first,distance2);
+    }
+    
+    std::vector<float> visited_submap_distance (submap_.size(),FLT_MAX);
+    visited_node_distance[start_idx] = 0.0;
+    std::vector<SubmapIndex> previous_submap (submap_.size(),-1);
+    bool find_end_idx = false;
+    while(!submap_to_visit.empty()&&!find_end_idx){
+        auto& current_submap = submap_to_visit.front();
+        auto& current_connections = road_map_[current_submap.first];
+        for(const auto& entry:current_connections){
+            if(entry.second.distance + visited_node_distance[current_submap.first] <
+               visited_node_distance[entry.first]){
+                visited_node_distance[entry.first] = entry.second.distance + visited_node_distance[current_submap.first];
+                previous_submap[entry.first] = current_submap;
+                if(entry.first==end_idx) {find_end_idx = true;break;}
+            }
+        }
+    }
+    if(previous_submap[end_idx]==-1) return {};
+    Path path;
+    SubmapIndex p = end_idx;
+    while(p!=-1){
+        path.insert(path.begin(),p);
+        p = previous_submap[p];
+    }
+    return path;
+}
+    
 // Return a free point in submap
 geometry_msgs::Point NavigationNode::RandomFreePoint(std::vector<SubmapIndex>& submap_indexes){
     // init rand seed
@@ -258,8 +342,6 @@ geometry_msgs::Point NavigationNode::RandomFreePoint(std::vector<SubmapIndex>& s
         }
     }
 }
-    
-
     
 // Return the pointer to the nearest node to target in RRT
 RRTreeNode* NavigationNode::NearestRRTreeNode(RRTreeNode* root, const geometry_msgs::Point& target){
@@ -282,22 +364,16 @@ RRTreeNode* NavigationNode::NearestRRTreeNode(RRTreeNode* root, const geometry_m
     return nearest_node;
 }
     
-// Return a path bewteen origins of two connecting submaps
-Path NavigationNode::PlanPathRRT(SubmapIndex start_idx,
-                                 SubmapIndex end_idx){
-    geometry_msgs::Point start_point = submap_[start_idx].pose.position;
-    geometry_msgs::Point end_point = submap_[end_idx].pose.position;
-    vector<SubmapIndex> submap_indexs = {start_idx,end_idx};
-    
+//
+Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
+                                      const geometry_msgs::Point& end_point,
+                                      const std::vector<SubmapIndex> submap_indexs){
     // Naively check the straight line between two points
     if(IsPathLocalFree(start_point,end_point,submap_indexs)){
         return {start_point,end_point};
     }
-    
-    // Init tree structure
     Path path;
     srand(time(NULL));
-    std::vector<SubmapIndex> submap_indexes = {start_idx,end_idx};
     RRTreeNode root_node (start_point);
     for(int node_num=0;node_num<kMaxRRTNodeNum;node_num++){
         geometry_msgs::point next_point;
@@ -325,13 +401,28 @@ Path NavigationNode::PlanPathRRT(SubmapIndex start_idx,
                     node = node->parent_node;
                 }
                 path.push_back(end_point);
-                std::cout<<"Successfully find a path from submap "<<start_idx<<" to "<<end_idx<<"!"<<std::endl;
+                std::cout<<"Successfully find a path!"<<std::endl;
                 return path;
             }
         }
     }
-    std::cout<<"Fail to find a path from submap "<<start_idx<<" to "<<end_idx<<"!"<<std::endl;
+    std::cout<<"Fail to find a path from submap!"<<std::endl;
     return {};
+}
+    
+// Return a path bewteen origins of two connecting submaps
+Path NavigationNode::PlanPathRRT(SubmapIndex start_idx,
+                                 SubmapIndex end_idx){
+    geometry_msgs::Point start_point = submap_[start_idx].pose.position;
+    geometry_msgs::Point end_point = submap_[end_idx].pose.position;
+    vector<SubmapIndex> submap_indexs = {start_idx,end_idx};
+    
+    // Naively check the straight line between two points
+    if(IsPathLocalFree(start_point,end_point,submap_indexs)){
+        return {start_point,end_point};
+    }
+    std::vector<SubmapIndex> submap_indexes = {start_idx,end_idx};
+    return LocalPlanPathRRT(start_point, end_point, submap_indexes);
 }
 
     
@@ -434,6 +525,10 @@ void NavigationNode::IsClickedPointFree(const geometry_msgs::PointStamped::Const
     std::cout<<std::endl;
 }
 
+void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg){
+    PlanPathRRT(submap_[0].pose.point,msg->point);
+}
+    
 // print out the current state for testing and debugging
 void NavigationNode::PrintState(){
     // print out submap_
@@ -451,6 +546,27 @@ void NavigationNode::PrintState(){
         std::cout<<std::endl;
     }
 }
+
+void NavigationNode::AddDisplayPath(Path path){
+    path_to_display_.header.stamp = ::ros::Time::now();
+    path_to_display_.header.frame_id = "/map";
+    for(auto& point : path){
+        geometry_msgs::PoseStamped pose;
+        pose.header.frame_id = ::ros::Time::now();
+        pose.header.frame_id = "/map";
+        pose.position = std::move(point);
+        pose.orientation.w = 1.0;
+        pose.orientation.x = 1.0;
+        pose.orientation.y = 1.0;
+        pose.orientation.z = 1.0;
+    }
+}
+    
+void NavigationNode::PublishPath(const ::ros::WallTimerEvent& timer_event){
+    path_publisher_.publish(path_to_display_);
+}
+    
+
 
 } // namespace cartographer_ros_navigation
 } // namespace cartographer_ros
