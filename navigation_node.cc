@@ -268,6 +268,10 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
         std::cout<<"goal is not free!"<<std::endl;
         return {};
     }
+    if(start_submap_index==end_submap_index){
+        std::vector<SubmapIndex> submap_indexes = {start_submap_index};
+        return LocalPlanPathRRT(start_point,end_point,submap_indexes);
+    }
     // connecting start to start_submap
     auto startpath = LocalPlanPathRRT(start_point,submap_[start_submap_index].pose.position,
                                     std::vector<SubmapIndex> ({start_submap_index}));
@@ -415,9 +419,11 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         // add next_node into RRT
         next_node.parent_node = nearest_node;
         nearest_node->children_node.push_back(&next_node);
+        std::cout<<"Successfully Add a new node to RRT"<<std::endl;
         
         // try to connect RRT and end point
         if(node_num % kStepToCheckReachEndPoint == 0){
+            std::cout<<"Try to connect End point!"<<std::endl;
             RRTreeNode* node = NearestRRTreeNode(&root_node,end_point);
             if(IsPathLocalFree(node->point,end_point,submap_indexes)){
                 // find the path!
