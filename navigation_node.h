@@ -32,7 +32,7 @@ struct RRTreeNode{
     RRTreeNode* parent_node;
     std::vector<RRTreeNode*> children_node;
     
-    RRTreeNode(){};
+    RRTreeNode(){parent_node=nullptr;children_node.clear();};
     RRTreeNode(geometry_msgs::Point p){point=p;parent_node=nullptr;children_node.clear();}
 };
 
@@ -86,6 +86,7 @@ public:
                          const geometry_msgs::Point& end,
                          const std::vector<SubmapIndex>& submap_indexs);
     
+    void DestroyRRTree(RRTreeNode* root);
     // print out the current state for testing and debugging
     void PrintState();
     void AddDisplayPath(Path path);
