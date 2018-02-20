@@ -29,6 +29,7 @@ float RotationBetweenPose(const geometry_msgs::Pose& pose1,
     return abs(pose1.orientation.z-pose1.orientation.z);
 }
 
+
 // Overload + for point and point
 geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
     geometry_msgs::Point sum;

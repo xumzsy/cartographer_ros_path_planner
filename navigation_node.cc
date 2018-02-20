@@ -32,13 +32,14 @@
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
 #include "utils.h"
+#include "local_rrt_planner.h"
 #include "nav_msgs/Path.h"
 #include "ros/ros.h"
 
 
 namespace cartographer_ros{
 namespace cartographer_ros_navigation {
-namespace{
+
     
 using ::cartographer::io::PaintSubmapSlicesResult;
 using ::cartographer::io::SubmapSlice;
@@ -46,13 +47,10 @@ using ::cartographer::mapping::SubmapId;
 
 const char kSubmapListTopicName [] = "/submap_list";
 const char kSubmapQueryServiceName [] = "/submap_query";
-const int kMaxNeighborNum = 3;
 const int kFinishVersion = 180;
-const int kProbabilityGridWidth = 100;
-const int kProbabilityGridHeight = 100;
 const int kOccupyThreshhold = 64;
 const int kMaxRRTNodeNum = 100;
-const int kStepToCheckReachEndPoint = 5;
+const int kStepToCheckReachEndPoint = 20;
 const float kOccupyGridResolution = 0.05;
 const float kDistance2ThresholdForAdding = 5.0;
 const float kDistance2ThresholdForUpdating = 1.0;
@@ -67,11 +65,9 @@ public:
     }
 };
 
-inline bool IsValueFree(int val){
+bool IsValueFree(int val){
     return val>=0 && val<kOccupyThreshhold;
 }
-
-} // namespace
     
 // constructor
 NavigationNode::NavigationNode(){
@@ -79,12 +75,13 @@ NavigationNode::NavigationNode(){
     cartographer::common::MutexLocker lock(&mutex_);
     submap_list_subscriber_ = node_handle_.subscribe<cartographer_ros_msgs::SubmapList>(kSubmapListTopicName,10, &NavigationNode::UpdateRoadMap,this);
     submap_query_client_ = node_handle_.serviceClient<cartographer_ros_msgs::SubmapQuery>(kSubmapQueryServiceName);
-
+    srand(time(NULL));
+    
     // For test
     clicked_point_subscriber_ = node_handle_.subscribe<geometry_msgs::PointStamped>("/clicked_point",1,&NavigationNode::NavigateToClickedPoint, this);
     path_publisher_ = node_handle_.advertise<::nav_msgs::Path>("/test_path", 10);
     path_publisher_timer_ = node_handle_.createWallTimer(::ros::WallDuration(0.1), &NavigationNode::PublishPath, this);
-
+    
     std::cout<<"Successfully Create NavigationNode"<<std::endl;
 }
 
@@ -172,25 +169,6 @@ void NavigationNode::AddSubmapGrid(SubmapIndex submap_index){
     std::cout<<"Succeed to add submap "<<submap_index<<" into submap_grid_"<<std::endl;
 }
     
-// Return whether a point is free in a submap
-int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use x & y in 2D case
-                                SubmapIndex submap_index) const {
-    const auto& submap_grid = submap_grid_[submap_index];
-    if(submap_grid!=submap_grid_.end()){
-        const int x = (point.x - submap_grid.x0) / submap_grid.resolution;
-        const int y = (point.y - submap_grid.y0) / submap_grid.resolution;
-        if(x>=0 && x<submap_grid.width && y>=0 && y<submap_grid.height){
-            return submap_grid.data.at(y*submap_grid.width+x);
-        } else{
-            std::cout<<"Point is out of submap range"<<std::endl;
-            return -1;
-        }
-    } else{
-        std::cout<<"Submap "<<submap_index<<" do not exist!"<<std::endl;
-        return -1;
-    }
-}
-    
 
 // TODO: Return a free path from starting position to end postion using RRT
 Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
@@ -207,14 +185,14 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
     }
     if(start_submap_index==end_submap_index){
         std::vector<SubmapIndex> submap_indexes = {start_submap_index};
-        path = LocalPlanPathRRT(start_point,end_point,submap_indexes);
+        path = LocalPlanPathRRT(start_point,end_point,GetSubmapGrid(),submap_indexes);
         AddDisplayPath(path);
         return path;
     }
     // connecting start to start_submap
     std::cout<<"connecting start to start_submap"<<std::endl;
     auto startpath = LocalPlanPathRRT(start_point,submap_[start_submap_index].pose.position,
-                                    std::vector<SubmapIndex> ({start_submap_index}));
+                                    GetSubmapGrid(), std::vector<SubmapIndex> ({start_submap_index}));
     if(!startpath.empty()){
         path.insert(path.end(),startpath.begin(),startpath.end());
     } else{
@@ -234,7 +212,7 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
     // connecting end_submap to end point
     std::cout<<" connecting end to end_submap"<<std::endl;
     auto endpath = LocalPlanPathRRT(submap_[end_submap_index].pose.position,end_point,
-                                      std::vector<SubmapIndex> ({end_submap_index}));
+                                      GetSubmapGrid(), std::vector<SubmapIndex> ({end_submap_index}));
     if(!endpath.empty()){
         path.insert(path.end(),endpath.begin(),endpath.end());
     } else{
@@ -246,7 +224,6 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
     return path;
     
 }
-
 
 Path NavigationNode::ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx){
     const auto& start_point = submap_[start_idx].pose.position;
@@ -293,120 +270,7 @@ Path NavigationNode::ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx
     }
     return path;
 }
-    
-// Return a free point in submap
-geometry_msgs::Point NavigationNode::RandomFreePoint(const std::vector<SubmapIndex>& submap_indexes){
-    // init rand seed
-    std::cout<<"Begin Generate Random Point"<<std::endl;
-    srand (time(NULL));
-    while(true){
-        int random_idx = rand() % submap_indexes.size();
-        auto& submap_grid = submap_grid_.find(submap_indexes[random_idx])->second;
-        int random_x = rand() % submap_grid.width;
-        int random_y = rand() % submap_grid.height;
-        int val = submap_grid.data[random_y * submap_grid.width + random_x];
-        if(val>=0 && val<kOccupyThreshhold){
-            std::cout<<"Try to Generate one point"<<std::endl;
-            geometry_msgs::Point point;
-            point.x = random_x * submap_grid.resolution + submap_grid.x0;
-            point.y = random_y * submap_grid.resolution + submap_grid.y0;
-            point.z = 0.0;
-            return point;
-        }
-    }
-}
-    
-// Return the pointer to the nearest node to target in RRT
-RRTreeNode* NavigationNode::NearestRRTreeNode(RRTreeNode* root, const geometry_msgs::Point& target){
-    std::cout<<"Try to find the nearest node in RRT"<<std::endl;
-    float min_distance = FLT_MAX;
-    RRTreeNode* nearest_node = root;
-    std::queue<RRTreeNode*> node_to_visit;
-    node_to_visit.push(root);
-    while(!node_to_visit.empty()){
-        RRTreeNode* current_node = node_to_visit.front();
-        //std::cout<<current_node->point<<": parent"<<(current_node->parent_node!=nullptr)<<" ,children: "<<current_node->children_node.size()<<std::endl;
-        float distance2 = Distance2BetweenPoint(target,current_node->point);
-        if(distance2 < min_distance){
-            min_distance = distance2;
-            nearest_node = current_node;
-        }
-        //std::cout<<distance2<<std::endl;
-        for(RRTreeNode* node:current_node->children_node ){
-            if( current_node->children_node.size()>20) break;
-            node_to_visit.push(node);
-        }
-        //std::cout<<"Push"<<std::endl;
-        if(!node_to_visit.empty()) node_to_visit.pop();
-        //std::cout<<"PoP"<<std::endl;
-    }
-    std::cout<<"End to find the nearest node in RRT"<<std::endl;
-    return nearest_node;
-}
 
-// destropy the RRT tree
-void NavigationNode::DestroyRRTree(RRTreeNode* root){
-    if(root!=nullptr){
-        for(auto& child:root->children_node){
-            DestroyRRTree(child);
-        }
-        delete(root);
-    }
-}
-//
-Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
-                                      const geometry_msgs::Point& end_point,
-                                      const std::vector<SubmapIndex> submap_indexes){
-    // Naively check the straight line between two points
-    if(IsPathLocalFree(start_point,end_point,submap_indexes)){
-        std::cout<<"Directly connect two submaps: "<<start_point<<","<<end_point<<std::endl;
-        return {start_point,end_point};
-    }
-    Path path;
-    srand(time(NULL));
-    RRTreeNode* root = new RRTreeNode (start_point);
-    for(int node_num=0;node_num<kMaxRRTNodeNum;node_num++){
-        geometry_msgs::Point next_point;
-        if((rand() % 1000) / 1000.0 < kProbabilityOfChooseEndPoint){
-            // choose end point
-            next_point = (end_point);
-        } else{
-            // random generate point
-            next_point =  RandomFreePoint(submap_indexes);
-        }
-        // search the nearest tree node (better method expeced but now just linear search
-
-        RRTreeNode* nearest_node = NearestRRTreeNode(root,next_point);
-        if(!IsPathLocalFree(nearest_node->point,next_point,submap_indexes)) continue;
-        //std::cout<<"next_point: "<<next_point<<"node_num: "<<node_num<<std::endl;
-        RRTreeNode* next_node = new RRTreeNode(next_point);
-        // add next_node into RRT
-        next_node->parent_node = nearest_node;
-        nearest_node->children_node.push_back(next_node);
-        std::cout<<"Successfully Add a new node to RRT"<<std::endl;
-        
-        // try to connect RRT and end point
-        if(node_num % kStepToCheckReachEndPoint == 0){
-            std::cout<<"Try to connect End point! Node Num:"<<node_num<<std::endl;
-            RRTreeNode* node = NearestRRTreeNode(root,end_point);
-            if(IsPathLocalFree(node->point,end_point,submap_indexes)){
-                // find the path!
-                while(node!=nullptr){
-                    path.insert(path.begin(),node->point);
-                    node = node->parent_node;
-                }
-                path.push_back(end_point);
-                std::cout<<"Successfully find a path!"<<std::endl;
-                DestroyRRTree(root);
-                return path;
-            }
-        }
-    }
-    std::cout<<"Fail to find a path from submap!"<<std::endl;
-    DestroyRRTree(root);
-    return {};
-}
-    
 // Return a path bewteen origins of two connecting submaps
 Path NavigationNode::PlanPathRRT(SubmapIndex start_idx,
                                  SubmapIndex end_idx){
@@ -416,39 +280,14 @@ Path NavigationNode::PlanPathRRT(SubmapIndex start_idx,
     std::vector<SubmapIndex> submap_indexs = {start_idx,end_idx};
     
     // Naively check the straight line between two points
-    if(IsPathLocalFree(start_point,end_point,submap_indexs)){
+    if(IsPathLocalFree(start_point, end_point, GetSubmapGrid, submap_indexs)){
         std::cout<<"Directly connect two submaps: "<<start_idx<<","<<end_idx<<std::endl;
         return {start_point,end_point};
     }
     std::vector<SubmapIndex> submap_indexes = {start_idx,end_idx};
-    return LocalPlanPathRRT(start_point, end_point, submap_indexes);
+    return LocalPlanPathRRT(start_point, end_point, GetSubmapGrid(), submap_indexes);
 }
 
-    
-
-// Return whether a straight line between two points are free
-bool NavigationNode::IsPathLocalFree(const geometry_msgs::Point& start,
-                                     const geometry_msgs::Point& end,
-                                     const std::vector<SubmapIndex>& submap_indexs){
-    std::cout<<"Begin Check Local Path"<<std::endl;
-    float distance2 = Distance2BetweenPoint(start,end);
-    float step = kOccupyGridResolution / sqrt(distance2);
-    for(float i=0;i<=1;i+=step){
-        geometry_msgs::Point point = (1.0-i) * start + i * end;
-        bool is_free = false;
-        for(auto submap_index:submap_indexs){
-            int val = IsLocalFree(point, submap_index);
-            if(val>=kOccupyThreshhold) return false;
-            if(val!=-1){
-                is_free = true;
-                break;
-            }
-        }
-        if(!is_free) return false;
-    }
-    return true;
-}
-    
 // add new entry to road map
 void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
     // check version

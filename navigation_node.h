@@ -27,24 +27,10 @@ namespace cartographer_ros_navigation {
 
 using SubmapIndex = int;
 using Path = std::vector<geometry_msgs::Point>;
-    
-struct RRTreeNode{
-    geometry_msgs::Point point;
-    RRTreeNode* parent_node;
-    std::vector<RRTreeNode*> children_node;
-    
-    RRTreeNode(){parent_node=nullptr;children_node.clear();};
-    RRTreeNode(geometry_msgs::Point p){point=p;parent_node=nullptr;children_node.clear();}
-};
-
-
 
 // Node to provide navigation for cartographer
 class NavigationNode{
 public:
-    // Rapid Random Tree Node
-    
-    
     
     NavigationNode();
     ~NavigationNode(){};
@@ -52,11 +38,17 @@ public:
     NavigationNode(const NavigationNode&) = delete;
     NavigationNode& operator=(const NavigationNode&) = delete;
     
+    // Return const reference to submap_grid_
+    const std::map<SubmapIndex, SubmapGrid>& GetSubmapGrid(){return submap_grid_};
+    
     // Return the cloest SubmapIndex if pose is free in this submap
     SubmapIndex CloestSubmap(const geometry_msgs::Point& point);
     
     // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
     int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index) const;
+    bool IsPathLocalFree(const geometry_msgs::Point& start,
+                         const geometry_msgs::Point& end,
+                         const std::vector<SubmapIndex>& submap_indexs);
     
     // Return a free path from starting position to end postion using RRT
     Path PlanPathRRT(const geometry_msgs::Point& start,
@@ -69,20 +61,6 @@ public:
     // Returan a path connecting two remote submaps
     Path ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx);
     
-    // connecting two points in given submaps
-    Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
-                          const geometry_msgs::Point& end_point,
-                          const std::vector<SubmapIndex> submap_indexs);
-    // Functions for RRT
-    
-    
-    geometry_msgs::Point RandomFreePoint(const std::vector<SubmapIndex>& submap_indexes);
-    RRTreeNode* NearestRRTreeNode(RRTreeNode* root, const geometry_msgs::Point& target);
-    bool IsPathLocalFree(const geometry_msgs::Point& start,
-                         const geometry_msgs::Point& end,
-                         const std::vector<SubmapIndex>& submap_indexs);
-    
-    void DestroyRRTree(RRTreeNode* root);
     // print out the current state for testing and debugging
     void PrintState();
     void AddDisplayPath(Path path);
