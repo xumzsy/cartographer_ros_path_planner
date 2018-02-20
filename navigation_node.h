@@ -20,6 +20,7 @@
 #include "cartographer_ros_msgs/SubmapEntry.h"
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
+#include "utils.h"
 
 namespace cartographer_ros{
 namespace cartographer_ros_navigation {
@@ -36,12 +37,7 @@ struct RRTreeNode{
     RRTreeNode(geometry_msgs::Point p){point=p;parent_node=nullptr;children_node.clear();}
 };
 
-class ComparePair{
-public:
-    bool operator ()(std::pair<SubmapIndex,float>& a, std::pair<SubmapIndex,float>& b){
-        return a.second > b.second;
-    }
-};
+
 
 // Node to provide navigation for cartographer
 class NavigationNode{
@@ -60,7 +56,7 @@ public:
     SubmapIndex CloestSubmap(const geometry_msgs::Point& point);
     
     // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
-    int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index);
+    int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index) const;
     
     // Return a free path from starting position to end postion using RRT
     Path PlanPathRRT(const geometry_msgs::Point& start,

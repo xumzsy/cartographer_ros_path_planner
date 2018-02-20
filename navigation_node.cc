@@ -31,7 +31,7 @@
 #include "cartographer_ros/submap.h"
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
-
+#include "utils.h"
 #include "nav_msgs/Path.h"
 #include "ros/ros.h"
 
@@ -60,72 +60,16 @@ const float kRotationThresholdForUpdating = 1.0;
 const float kProbabilityGridResolution = 0.05;
 const float kProbabilityOfChooseEndPoint = 0.2;
     
-    
-inline float Distance2BetweenPose(const geometry_msgs::Pose& pose1,
-                                  const geometry_msgs::Pose& pose2){
-    return (pose1.position.x-pose2.position.x)*(pose1.position.x-pose2.position.x)+
-    (pose1.position.y-pose2.position.y)*(pose1.position.y-pose2.position.y)
-    /*+(pose1.position.z-pose2.position.z)*(pose1.position.z-pose2.position.z)*/;
-}
-    
-inline float Distance2BetweenPoint(const geometry_msgs::Point& point1,
-                                   const geometry_msgs::Point& point2){
-    return (point1.x-point2.x)*(point1.x-point2.x) + (point1.y-point2.y)*(point1.y-point2.y);
-}
-    
-inline float RotationBetweenPose(const geometry_msgs::Pose& pose1,
-                                 const geometry_msgs::Pose& pose2){
-    return abs(pose1.orientation.z-pose1.orientation.z);
-}
+class ComparePair{
+public:
+    bool operator ()(std::pair<SubmapIndex,float>& a, std::pair<SubmapIndex,float>& b){
+        return a.second > b.second;
+    }
+};
 
 inline bool IsValueFree(int val){
     return val>=0 && val<kOccupyThreshhold;
 }
-    
-geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
-    geometry_msgs::Point sum;
-    sum.x = a.x + b.x;
-    sum.y = a.y + b.y;
-    sum.z = a.z + b.z;
-    return sum;
-}
-    
-geometry_msgs::Point operator*(float a, const geometry_msgs::Point& b){
-    geometry_msgs::Point product;
-    product.x = a * b.x;
-    product.y = a * b.y;
-    product.z = a * b.z;
-    return product;
-}
-
-std::ostream& operator<<(std::ostream& os, const geometry_msgs::Point& point){
-    os<<" "<<point.x<<","<<point.y<<","<<point.z<<" ";
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, Path& path){
-    for(geometry_msgs::Point& point: path){
-        os<<point<<std::endl;
-    }
-    return os;
-}
-/** 
-geometry_msgs::Pose PoseMultiply2D(geometry_msgs::Pose& pose1, geometry_msgs::Pose& pose2){
-    // result = pose1 * pose2
-    geometry_msgs::Pose result;
-    result.orientation.w = pose1.orientation.w * pose2.orientation.w - pose1.orientation.z * pose2.orientation.z;
-    result.orientation.x = 0.0;
-    result.orientation.y = 0.0;
-    result.orientation.z = pose1.orientation.z * pose2.orientation.w + pose1.orientation.w * pose2.orientation.z;
-    
-    float cos_theta_1 = 1 - 2*pose1.orientation.z;
-    float sin_theta_1 = 2 * pose1.orientation.w * pose1.orientation.z;
-    result.position.x = pose1.position.x + pose2.position.x * cos_theta_1 - pose2.position.y * sin_theta_1;
-    result.position.y = pose1.position.y + pose2.position.y * cos_theta_1 + pose2.position.x * sin_theta_1;
-    result.position.z = 0.0;
-    return result;
-}
-  */  
 
 } // namespace
     
@@ -164,8 +108,9 @@ SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Point& point) {
 // Add new submap grid to submap_grad_ using SubmapQuery
 void NavigationNode::AddSubmapGrid(SubmapIndex submap_index){
     std::cout<<"Begin to add submap "<<submap_index<<" into submap_grid_"<<std::endl;
-    // Double Check there's no existing grid
-    if(submap_grid_.count(submap_index)==1) return;
+    // clear the existing submap
+    submap_grid_.erase(submap_index);
+    
     // first fetch the submaptexture
     cartographer_ros_msgs::SubmapEntry& submap_entry = submap_[submap_index];
     const SubmapId id{submap_entry.trajectory_id, submap_entry.submap_index};
@@ -229,37 +174,21 @@ void NavigationNode::AddSubmapGrid(SubmapIndex submap_index){
     
 // Return whether a point is free in a submap
 int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use x & y in 2D case
-                                SubmapIndex submap_index) {
-    //::cartographer::common::MutexLocker locker(&mutex_);
-    //std::cout<<"Check"<<point<<"Free or not in Submap "<<submap_index<<std::endl;
-    // If submap_grid exists, look up the grid
-    if(submap_grid_.count(submap_index)==1){
-        auto& submap_grid = submap_grid_[submap_index];
-        int x = (point.x - submap_grid.x0) / submap_grid.resolution;
-        int y = (point.y - submap_grid.y0) / submap_grid.resolution;
-        if(x>=0&&x<submap_grid.width&&y>=0&&y<submap_grid.height){
-            int val = submap_grid.data.at(y*submap_grid.width+x);
-            return val;
+                                SubmapIndex submap_index) const {
+    const auto& submap_grid = submap_grid_[submap_index];
+    if(submap_grid!=submap_grid_.end()){
+        const int x = (point.x - submap_grid.x0) / submap_grid.resolution;
+        const int y = (point.y - submap_grid.y0) / submap_grid.resolution;
+        if(x>=0 && x<submap_grid.width && y>=0 && y<submap_grid.height){
+            return submap_grid.data.at(y*submap_grid.width+x);
         } else{
             std::cout<<"Point is out of submap range"<<std::endl;
             return -1;
         }
-    }
-    
-    // Otherwise create the grid
-    AddSubmapGrid(submap_index);
-    auto& submap_grid = submap_grid_[submap_index];
-    
-    // Check the particular point
-    const int x = (point.x - submap_grid.x0) / submap_grid.resolution;
-    const int y = (point.y - submap_grid.y0) / submap_grid.resolution;
-    if(x>=0&&x<submap_grid.width&&y>=0&&y<submap_grid.height){
-        const int val = submap_grid.data.at(y*submap_grid.width+x);
-        return val;
     } else{
-        std::cout<<"Point is out of submap range"<<std::endl;
-        return -1;;
-    }    
+        std::cout<<"Submap "<<submap_index<<" do not exist!"<<std::endl;
+        return -1;
+    }
 }
     
 
@@ -565,23 +494,26 @@ void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::Cons
     ::cartographer::common::MutexLocker locker(&mutex_);
     
     // check if submap has been changed
-    std::cout<<"Update RoadMap"<<std::endl;
+    //std::cout<<"Update RoadMap"<<std::endl;
     for(auto& submap_entry:msg->submap){
         SubmapIndex submap_index = submap_entry.submap_index;
+        // ignore unfinished submaps
         if(submap_entry.submap_version<kFinishVersion) continue;
-        //submap_indexs_to_delete.erase(submap_index);
         
-        // add new finished submap into road_map_
+        // New submap
         if(submap_.find(submap_index)==submap_.end()){
             submap_[submap_index] = submap_entry;
+            AddSubmapGrid(submap_index);
             AddRoadMapEntry(submap_index);
         } else{
+            // Existing submap
             auto& old_submap_entry = submap_[submap_index];
-            if(old_submap_entry.submap_version!=kFinishVersion) AddRoadMapEntry(submap_index);
+            // check how much the submap_entry has changed
             float distance2 = Distance2BetweenPose(old_submap_entry.pose,submap_entry.pose);
             float rotation = RotationBetweenPose(old_submap_entry.pose,submap_entry.pose);
-            if(rotation>kRotationThresholdForUpdating || distance2>kDistance2ThresholdForUpdating){
+            if( rotation>kRotationThresholdForUpdating || distance2>kDistance2ThresholdForUpdating){
                 submap_[submap_index] = submap_entry;
+                AddSubmapGrid(submap_index);
                 AddRoadMapEntry(submap_index);
             }
         }
