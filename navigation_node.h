@@ -17,6 +17,9 @@
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
 #include "cartographer_ros_msgs/RoadmapQuery.h"
+#include "cartographer_ros_msgs/ConnectionQuery.h"
+#include "cartographer_ros_msgs/PathPlan.h"
+#include "cartographer_ros_msgs/ReconnectSubmaps.h"
 #include "geometry_msgs/PointStamped.h"
 #include "nav_msgs/Path.h"
 #include "ros/ros.h"
@@ -85,14 +88,14 @@ private:
     struct SubmapConnectState{
         SubmapIndex start_submap_index;
         SubmapIndex end_submap_index;
-        float distance;
+        float length;
         Path path;
         
         SubmapConnectState(){};
         SubmapConnectState(SubmapIndex start_index, SubmapIndex end_index, float d) :
         start_submap_index(start_index),
         end_submap_index(end_index),
-        distance(d) {};
+        length(d) {};
     };
     
     struct SubmapGrid{
@@ -138,13 +141,15 @@ private:
     ::ros::ServiceServer roadmap_query_server_;
     ::ros::ServiceServer connection_query_server_;
     ::ros::ServiceServer plan_path_server_;
-    
+    ::ros::ServiceServer reconnect_submaps_server_;
     bool QueryRoadmap(cartographer_ros_msgs::RoadmapQuery::Request &req,
                       cartographer_ros_msgs::RoadmapQuery::Response &res) const;
     bool QueryConnection(cartographer_ros_msgs::ConnectionQuery::Request &req,
                          cartographer_ros_msgs::ConnectionQuery::Response &res) const;
     bool PlanPath(cartographer_ros_msgs::PathPlan::Request &req,
                   cartographer_ros_msgs::PathPlan::Response &res) const;
+    bool ReconnectSubmapService(cartographer_ros_msgs::ReconnectSubmaps &req,
+                                cartographer_ros_msgs::ReconnectSubmaps &res);
     void PublishPath(const ::ros::WallTimerEvent& timer_event);
     
     // For test and display

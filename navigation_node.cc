@@ -46,7 +46,8 @@ using ::cartographer::mapping::SubmapId;
 const char kSubmapListTopicName [] = "/submap_list";
 const char kSubmapQueryServiceName [] = "/submap_query";
 const char kRoadmapQueryServiceName [] = "/roadmap_query";
-const char kConnectionQueryServiceName [] = "connection_query";
+const char kConnectionQueryServiceName [] = "/connection_query";
+const char kReconnectSubmapsServiceName [] = "/reconnect_submaps";
 const char kPathPlanServiceName [] = "plan_path";
 const int kMaxNeighborNum = 3;
 const int kFinishVersion = 180;
@@ -96,6 +97,16 @@ geometry_msgs::Point operator*(float a, const geometry_msgs::Point& b){
     product.z = a * b.z;
     return product;
 }
+    
+// calculate the path length
+float LengthOfPath(const Path& path){
+    float length = 0.0;
+    for(int i=0;i<path.size()-1;path++){
+        float distance2 = Distance2BetweenPoint(path[i],path[i+1]);
+        length += sqrt(distance2);
+    }
+    return length;
+}
 
 std::ostream& operator<<(std::ostream& os, const geometry_msgs::Point& point){
     os<<" "<<point.x<<","<<point.y<<","<<point.z<<" ";
@@ -120,6 +131,7 @@ NavigationNode::NavigationNode(){
     roadmap_query_server_ = node_handle_.advertiseService(kRoadmapQueryServiceName, QueryRoadmap);
     connection_query_server_ = node_handle_.advertiseService(kConnectionQueryServiceName, QueryConnection);
     plan_path_server_ = node_handle_.advertiseService(kPathPlanServiceName,PlanPath);
+    reconnect_submaps_server_ = node_handle_.advertiseService(kReconnectSubmapsServiceName, ReconnectSubmapService);
     srand (time(NULL));
 
     // For test
@@ -333,9 +345,9 @@ Path NavigationNode::ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx
          
         auto& current_connections = road_map_[current_submap];
         for(const auto& entry:current_connections){
-            if(entry.second.distance + visited_submap_distance[current_submap] <
+            if(entry.second.length + visited_submap_distance[current_submap] <
                visited_submap_distance[entry.first]){
-                visited_submap_distance[entry.first] = entry.second.distance + visited_submap_distance[current_submap];
+                visited_submap_distance[entry.first] = entry.second.length + visited_submap_distance[current_submap];
                 previous_submap[entry.first] = current_submap;
                 submap_to_visit.push(entry.first);
                 if(entry.first==end_idx) {find_end_idx = true;break;} 
@@ -407,6 +419,13 @@ RRTreeNode* NavigationNode::NearestRRTreeNode(RRTreeNode* root, const geometry_m
     return nearest_node;
 }
 
+// Service to reconnect two submaps
+bool NavigationNode::ReconnectSubmapService(cartographer_ros_msgs::ReconnectSubmaps &req,
+                                            cartographer_ros_msgs::ReconnectSubmaps &res){
+    ReconnectSubmaps(req.start_submap_index,req.end_submap_index);
+    return true;
+}
+    
 // Destropy the RRT tree
 void NavigationNode::DestroyRRTree(RRTreeNode* root){
     if(root!=nullptr){
@@ -490,8 +509,9 @@ Path NavigationNode::PlanPathRRT(SubmapIndex start_idx, SubmapIndex end_idx){
 bool NavigationNode::ReconnectSubmaps(SubmapIndex start_idx, SubmapIndex end_idx){
     Path path = PlanPathRRT(start_idx,end_idx);
     if(path.empty()) return false;
-    SubmapConnectState start_submap_connection_state (start_idx,end_idx,0.0);
-    SubmapConnectState end_submap_connection_state (end_idx,end_idx,0.0);
+    float path_length = LengthOfPath(path);
+    SubmapConnectState start_submap_connection_state (start_idx,end_idx,path_length);
+    SubmapConnectState end_submap_connection_state (end_idx,end_idx,path_length);
     start_submap_connect_state.path = path;
     std::reverse(path.begin(),path.end());
     end_submap_connect_state.path = std::move(path);
@@ -517,22 +537,22 @@ void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
         if(distance2 < kDistance2ThresholdForAdding || 
             other_submap_entry.submap_index-submap_entry.submap_index==1 ||
             other_submap_entry.submap_index-submap_entry.submap_index==-1){
-            // TODO: Try to connect these two submap
+            
             // use RRT to connect these two submap
             Path path = PlanPathRRT(submap_entry.submap_index,other_submap_entry.submap_index);
             
-
             if(path.empty()){
                 std::cout<<"Warning!! Fail to connect "<<submap_entry.submap_index<<" , "<<other_submap_entry.submap_index<<std::endl;
                 continue;
             }
             // add into road_map
+            float path_length = LengthOfPath(path);
             SubmapConnectState submap_connect_state (submap_entry.submap_index,
                                                      other_submap_entry.submap_index,
-                                                     distance2);
+                                                     path_length);
             SubmapConnectState other_submap_connect_state (other_submap_entry.submap_index,
                                                            submap_entry.submap_index,
-                                                           distance2);
+                                                           path_length);
             
             submap_connect_state.path = path;
             std::reverse(path.begin(),path.end());
