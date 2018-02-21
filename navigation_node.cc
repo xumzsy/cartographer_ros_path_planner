@@ -45,6 +45,9 @@ using ::cartographer::mapping::SubmapId;
 
 const char kSubmapListTopicName [] = "/submap_list";
 const char kSubmapQueryServiceName [] = "/submap_query";
+const char kRoadmapQueryServiceName [] = "/roadmap_query";
+const char kConnectionQueryServiceName [] = "connection_query";
+const char kPathPlanServiceName [] = "plan_path";
 const int kMaxNeighborNum = 3;
 const int kFinishVersion = 180;
 const int kProbabilityGridWidth = 100;
@@ -114,6 +117,9 @@ NavigationNode::NavigationNode(){
     cartographer::common::MutexLocker lock(&mutex_);
     submap_list_subscriber_ = node_handle_.subscribe<cartographer_ros_msgs::SubmapList>(kSubmapListTopicName,10, &NavigationNode::UpdateRoadMap,this);
     submap_query_client_ = node_handle_.serviceClient<cartographer_ros_msgs::SubmapQuery>(kSubmapQueryServiceName);
+    roadmap_query_server_ = node_handle_.advertiseService(kRoadmapQueryServiceName, QueryRoadmap);
+    connection_query_server_ = node_handle_.advertiseService(kConnectionQueryServiceName, QueryConnection);
+    plan_path_server_ = node_handle_.advertiseService(kPathPlanServiceName,PlanPath);
     srand (time(NULL));
 
     // For test
@@ -480,7 +486,20 @@ Path NavigationNode::PlanPathRRT(SubmapIndex start_idx, SubmapIndex end_idx){
     return LocalPlanPathRRT(start_point, end_point, submap_indexes);
 }
 
-
+// Reconnect two submaps
+bool NavigationNode::ReconnectSubmaps(SubmapIndex start_idx, SubmapIndex end_idx){
+    Path path = PlanPathRRT(start_idx,end_idx);
+    if(path.empty()) return false;
+    SubmapConnectState start_submap_connection_state (start_idx,end_idx,0.0);
+    SubmapConnectState end_submap_connection_state (end_idx,end_idx,0.0);
+    start_submap_connect_state.path = path;
+    std::reverse(path.begin(),path.end());
+    end_submap_connect_state.path = std::move(path);
+    road_map_[start_idx][end_idx] = std::move(submap_connect_state);
+    road_map_[end_idx][start_idx] = std::move(other_submap_connect_state);
+    return true;
+}
+    
 // add new entry to road map
 void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
     // check version
@@ -551,18 +570,57 @@ void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::Cons
         }
     }
 }
-
+    
+// Functions providing service
+bool NavigationNode::QueryRoadmap(cartographer_ros_msgs::RoadmapQuery::Request &req,
+                                  cartographer_ros_msgs::RoadmapQuery::Response &res) const{
+    auto& pair = road_map_.find(req.submap_index);
+    if(pair==road_map_.end()){
+        std::cout<<"Submap "<<req.submap_index<<" do not exist!"<<std::endl;
+        return true;
+    }
+    std::cout<<"Submap "<<req.submap_index<<" Connections: ";
+    for(auto& connection_state:pair->second){
+        std::cout<<connection_state.end_submap_index<<" ";
+        res.connections.push_back(connection_state.end_submap_index);
+    }
+    std::cout<<std::endl;
+    return true;
+}
+    
+bool NavigationNode::QueryConnection(cartographer_ros_msgs::ConnectionQuery::Request &req,
+                                     cartographer_ros_msgs::ConnectionQuery::Response &res) const {
+    auto& pair = road_map_.find(req.start_submap_index);
+    if(pair==road_map_.end()){
+        std::cout<<"Submap "<<req.submap_index<<" do not exist!"<<std::endl;
+        return true;
+    }
+    auto& entry = pair->second.find(req.end_submap_index);
+    if(entry==pair->second.end()){
+        return true;
+    }
+    res.path = entry->second.path;
+    return true;
+}
+    
+bool NavigationNode::PlanPath(cartographer_ros_msgs::PathPlan::Request &req,
+                              cartographer_ros_msgs::PathPlan::Response &res) const {
+    res.path = PlanPathRRT(req.start_point,req.end_point);
+    return true;
+}
+    
+    
 /**
 Functions below are for test
 */
 
-void NavigationNode::IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg){
+void NavigationNode::IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg) const {
     //std::cout<<msg->point.x<<","<<msg->point.y<<":";
     std::cout<<IsLocalFree(msg->point,0);
     std::cout<<std::endl;
 }
 
-void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg){
+void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg) const {
     std::cout<<"Received Goal:"<<msg->point.x<<","<<msg->point.y<<std::endl;
     geometry_msgs::Point departure;
     departure.x = 0.01;

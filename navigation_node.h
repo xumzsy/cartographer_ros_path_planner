@@ -16,6 +16,7 @@
 #include "cartographer_ros_msgs/SubmapEntry.h"
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
+#include "cartographer_ros_msgs/RoadmapQuery.h"
 #include "geometry_msgs/PointStamped.h"
 #include "nav_msgs/Path.h"
 #include "ros/ros.h"
@@ -107,6 +108,9 @@ private:
     // Add a submap grid into submap_grid_
     void AddSubmapGrid(SubmapIndex submap_index);
     
+    // Reconnect two submaps
+    bool ReconnectSubmaps(SubmapIndex start_idx, SubmapIndex end_idx);
+    
     // Add a submap into road map
     void AddRoadMapEntry(const SubmapIndex submap_index);
     
@@ -131,13 +135,22 @@ private:
     nav_msgs::Path path_to_display_;
     ::ros::WallTimer path_publisher_timer_;
     ::ros::Publisher path_publisher_;
+    ::ros::ServiceServer roadmap_query_server_;
+    ::ros::ServiceServer connection_query_server_;
+    ::ros::ServiceServer plan_path_server_;
     
+    bool QueryRoadmap(cartographer_ros_msgs::RoadmapQuery::Request &req,
+                      cartographer_ros_msgs::RoadmapQuery::Response &res) const;
+    bool QueryConnection(cartographer_ros_msgs::ConnectionQuery::Request &req,
+                         cartographer_ros_msgs::ConnectionQuery::Response &res) const;
+    bool PlanPath(cartographer_ros_msgs::PathPlan::Request &req,
+                  cartographer_ros_msgs::PathPlan::Response &res) const;
     void PublishPath(const ::ros::WallTimerEvent& timer_event);
     
     // For test and display
     ::ros::Subscriber clicked_point_subscriber_ GUARDED_BY(mutex_);
-    void IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg);
-    void NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg);
+    void IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg) const;
+    void NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg) const;
 };
     
 } // namespace cartographer_ros_navigation

@@ -1,0 +1,3 @@
+int32 submap_index
+---
+int32[] connections
