@@ -10,16 +10,15 @@
 #include <map>
 #include <vector>
 
-#include "ros/ros.h"
-#include "geometry_msgs/Pose.h"
-#include "geometry_msgs/Point.h"
-#include "geometry_msgs/PointStamped.h"
-#include "nav_msgs/Path.h"
+
 #include "cartographer/common/mutex.h"
 #include "cartographer/common/port.h"
 #include "cartographer_ros_msgs/SubmapEntry.h"
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
+#include "geometry_msgs/PointStamped.h"
+#include "nav_msgs/Path.h"
+#include "ros/ros.h"
 
 namespace cartographer_ros{
 namespace cartographer_ros_navigation {
@@ -31,24 +30,12 @@ struct RRTreeNode{
     geometry_msgs::Point point;
     RRTreeNode* parent_node;
     std::vector<RRTreeNode*> children_node;
-    
-    RRTreeNode(){parent_node=nullptr;children_node.clear();};
     RRTreeNode(geometry_msgs::Point p){point=p;parent_node=nullptr;children_node.clear();}
-};
-
-class ComparePair{
-public:
-    bool operator ()(std::pair<SubmapIndex,float>& a, std::pair<SubmapIndex,float>& b){
-        return a.second > b.second;
-    }
 };
 
 // Node to provide navigation for cartographer
 class NavigationNode{
 public:
-    // Rapid Random Tree Node
-    
-    
     
     NavigationNode();
     ~NavigationNode(){};
@@ -56,19 +43,21 @@ public:
     NavigationNode(const NavigationNode&) = delete;
     NavigationNode& operator=(const NavigationNode&) = delete;
     
-    // Return the cloest SubmapIndex if pose is free in this submap
-    SubmapIndex CloestSubmap(const geometry_msgs::Point& point);
-    
     // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
     int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index) const;
+    bool IsPathLocalFree(const geometry_msgs::Point& start,
+                         const geometry_msgs::Point& end,
+                         const std::vector<SubmapIndex>& submap_indexs) const;
+    
+    // Return the cloest SubmapIndex if pose is free in this submap
+    SubmapIndex CloestSubmap(const geometry_msgs::Point& point);
     
     // Return a free path from starting position to end postion using RRT
     Path PlanPathRRT(const geometry_msgs::Point& start,
                      const geometry_msgs::Point& end);
     
     // Return a free path between submaps' origin
-    Path PlanPathRRT(SubmapIndex start_idx,
-                     SubmapIndex end_idx);
+    Path PlanPathRRT(SubmapIndex start_idx, SubmapIndex end_idx);
     
     // Returan a path connecting two remote submaps
     Path ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx);
@@ -77,16 +66,16 @@ public:
     Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
                           const geometry_msgs::Point& end_point,
                           const std::vector<SubmapIndex> submap_indexs);
+    
     // Functions for RRT
-    
-    
     geometry_msgs::Point RandomFreePoint(const std::vector<SubmapIndex>& submap_indexes);
-    RRTreeNode* NearestRRTreeNode(RRTreeNode* root, const geometry_msgs::Point& target);
-    bool IsPathLocalFree(const geometry_msgs::Point& start,
-                         const geometry_msgs::Point& end,
-                         const std::vector<SubmapIndex>& submap_indexs) const;
     
+    // Search the nearest node in RRT
+    RRTreeNode* NearestRRTreeNode(RRTreeNode* root, const geometry_msgs::Point& target);
+    
+    // Destroy all nodes in RRT
     void DestroyRRTree(RRTreeNode* root);
+    
     // print out the current state for testing and debugging
     void PrintState();
     void AddDisplayPath(Path path);
@@ -121,7 +110,7 @@ private:
     // Add a submap into road map
     void AddRoadMapEntry(const SubmapIndex submap_index);
     
-    // Update roadmap every time received submapList
+    // Update submap_, road_map_ and submap_grid_ every time receive submapList
     void UpdateRoadMap(const cartographer_ros_msgs::SubmapList::ConstPtr& msg);
     
     ::cartographer::common::Mutex mutex_;
@@ -138,13 +127,15 @@ private:
     // Road map to store the connectivity of submaps and corresponding path
     std::map<SubmapIndex,std::map<SubmapIndex,SubmapConnectState>> road_map_ GUARDED_BY(mutex_);
     
-
-    // For test
+    // ROS agent
     nav_msgs::Path path_to_display_;
     ::ros::WallTimer path_publisher_timer_;
-    ::ros::Subscriber clicked_point_subscriber_ GUARDED_BY(mutex_);
     ::ros::Publisher path_publisher_;
+    
     void PublishPath(const ::ros::WallTimerEvent& timer_event);
+    
+    // For test and display
+    ::ros::Subscriber clicked_point_subscriber_ GUARDED_BY(mutex_);
     void IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg);
     void NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg);
 };
