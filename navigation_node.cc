@@ -49,12 +49,9 @@ const char kRoadmapQueryServiceName [] = "/roadmap_query";
 const char kConnectionQueryServiceName [] = "/connection_query";
 const char kReconnectSubmapsServiceName [] = "/reconnect_submaps";
 const char kPathPlanServiceName [] = "plan_path";
-const int kMaxNeighborNum = 3;
 const int kFinishVersion = 180;
-const int kProbabilityGridWidth = 100;
-const int kProbabilityGridHeight = 100;
-const int kOccupyThreshhold = 75;
-const int kMaxRRTNodeNum = 100;
+const int kOccupyThreshhold = 64;
+const int kMaxRRTNodeNum = 200;
 const int kStepToCheckReachEndPoint = 25;
 const float kOccupyGridResolution = 0.05;
 const float kDistance2ThresholdForAdding = 20.0;
@@ -62,7 +59,7 @@ const float kDistance2ThresholdForUpdating = 1.0;
 const float kRotationThresholdForUpdating = 1.0;
 const float kProbabilityGridResolution = 0.05;
 const float kProbabilityOfChooseEndPoint = 0.1;
-const float kRRTGrowStep = 0.3;    
+const float kRRTGrowStep = 0.2;    
     
 float Distance2BetweenPose(const geometry_msgs::Pose& pose1, const geometry_msgs::Pose& pose2){
     return (pose1.position.x-pose2.position.x)*(pose1.position.x-pose2.position.x)+
@@ -101,7 +98,7 @@ geometry_msgs::Point operator*(float a, const geometry_msgs::Point& b){
 // calculate the path length
 float LengthOfPath(const Path& path){
     float length = 0.0;
-    for(int i=0;i<path.size()-1;path++){
+    for(size_t i=0;i<path.size()-1;i++){
         float distance2 = Distance2BetweenPoint(path[i],path[i+1]);
         length += sqrt(distance2);
     }
@@ -121,21 +118,23 @@ std::ostream& operator<<(std::ostream& os, Path& path){
 }
   
 } // namespace
-    
+
+
 // Constructor
 NavigationNode::NavigationNode(){
 
     cartographer::common::MutexLocker lock(&mutex_);
     submap_list_subscriber_ = node_handle_.subscribe<cartographer_ros_msgs::SubmapList>(kSubmapListTopicName,10, &NavigationNode::UpdateRoadMap,this);
     submap_query_client_ = node_handle_.serviceClient<cartographer_ros_msgs::SubmapQuery>(kSubmapQueryServiceName);
-    roadmap_query_server_ = node_handle_.advertiseService(kRoadmapQueryServiceName, QueryRoadmap);
-    connection_query_server_ = node_handle_.advertiseService(kConnectionQueryServiceName, QueryConnection);
-    plan_path_server_ = node_handle_.advertiseService(kPathPlanServiceName,PlanPath);
-    reconnect_submaps_server_ = node_handle_.advertiseService(kReconnectSubmapsServiceName, ReconnectSubmapService);
+
+    roadmap_query_server_ = node_handle_.advertiseService(kRoadmapQueryServiceName,&NavigationNode::QueryRoadmap,this);
+    connection_query_server_ = node_handle_.advertiseService(kConnectionQueryServiceName, &NavigationNode::QueryConnection,this);
+    plan_path_server_ = node_handle_.advertiseService(kPathPlanServiceName,&NavigationNode::PlanPath,this);
+    reconnect_submaps_server_ = node_handle_.advertiseService(kReconnectSubmapsServiceName, &NavigationNode::ReconnectSubmapService,this);
     srand (time(NULL));
 
     // For test
-    clicked_point_subscriber_ = node_handle_.subscribe<geometry_msgs::PointStamped>("/clicked_point",1,&NavigationNode::IsClickedPointFree, this);
+    clicked_point_subscriber_ = node_handle_.subscribe<geometry_msgs::PointStamped>("/clicked_point",1,&NavigationNode::NavigateToClickedPoint, this);
     path_publisher_ = node_handle_.advertise<::nav_msgs::Path>("/test_path", 10);
     path_publisher_timer_ = node_handle_.createWallTimer(::ros::WallDuration(0.1), &NavigationNode::PublishPath, this);
 
@@ -420,8 +419,8 @@ RRTreeNode* NavigationNode::NearestRRTreeNode(RRTreeNode* root, const geometry_m
 }
 
 // Service to reconnect two submaps
-bool NavigationNode::ReconnectSubmapService(cartographer_ros_msgs::ReconnectSubmaps &req,
-                                            cartographer_ros_msgs::ReconnectSubmaps &res){
+bool NavigationNode::ReconnectSubmapService(::cartographer_ros_msgs::ReconnectSubmaps::Request &req,
+                                            ::cartographer_ros_msgs::ReconnectSubmaps::Response &res){
     ReconnectSubmaps(req.start_submap_index,req.end_submap_index);
     return true;
 }
@@ -512,11 +511,11 @@ bool NavigationNode::ReconnectSubmaps(SubmapIndex start_idx, SubmapIndex end_idx
     float path_length = LengthOfPath(path);
     SubmapConnectState start_submap_connection_state (start_idx,end_idx,path_length);
     SubmapConnectState end_submap_connection_state (end_idx,end_idx,path_length);
-    start_submap_connect_state.path = path;
+    start_submap_connection_state.path = path;
     std::reverse(path.begin(),path.end());
-    end_submap_connect_state.path = std::move(path);
-    road_map_[start_idx][end_idx] = std::move(submap_connect_state);
-    road_map_[end_idx][start_idx] = std::move(other_submap_connect_state);
+    end_submap_connection_state.path = std::move(path);
+    road_map_[start_idx][end_idx] = std::move(start_submap_connection_state);
+    road_map_[end_idx][start_idx] = std::move(end_submap_connection_state);
     return true;
 }
     
@@ -592,30 +591,32 @@ void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::Cons
 }
     
 // Functions providing service
-bool NavigationNode::QueryRoadmap(cartographer_ros_msgs::RoadmapQuery::Request &req,
-                                  cartographer_ros_msgs::RoadmapQuery::Response &res) const{
-    auto& pair = road_map_.find(req.submap_index);
+bool NavigationNode::QueryRoadmap(::cartographer_ros_msgs::RoadmapQuery::Request &req,
+                                  ::cartographer_ros_msgs::RoadmapQuery::Response &res){
+    const auto& pair = road_map_.find(req.submap_index);
     if(pair==road_map_.end()){
         std::cout<<"Submap "<<req.submap_index<<" do not exist!"<<std::endl;
         return true;
     }
     std::cout<<"Submap "<<req.submap_index<<" Connections: ";
-    for(auto& connection_state:pair->second){
-        std::cout<<connection_state.end_submap_index<<" ";
-        res.connections.push_back(connection_state.end_submap_index);
+    for(const auto& connection_state:pair->second){
+        std::cout<<connection_state.first<<" ";
+        res.connections.push_back(connection_state.first);
     }
     std::cout<<std::endl;
     return true;
 }
     
 bool NavigationNode::QueryConnection(cartographer_ros_msgs::ConnectionQuery::Request &req,
-                                     cartographer_ros_msgs::ConnectionQuery::Response &res) const {
-    auto& pair = road_map_.find(req.start_submap_index);
+                                     cartographer_ros_msgs::ConnectionQuery::Response &res){
+    SubmapIndex start_submap_index = req.start_submap_index;
+    SubmapIndex end_submap_index = req.end_submap_index;
+    const auto& pair = road_map_.find(start_submap_index);
     if(pair==road_map_.end()){
-        std::cout<<"Submap "<<req.submap_index<<" do not exist!"<<std::endl;
+        std::cout<<"Submap "<<req.start_submap_index<<" do not exist!"<<std::endl;
         return true;
     }
-    auto& entry = pair->second.find(req.end_submap_index);
+    const auto& entry = pair->second.find(end_submap_index);
     if(entry==pair->second.end()){
         return true;
     }
@@ -624,8 +625,10 @@ bool NavigationNode::QueryConnection(cartographer_ros_msgs::ConnectionQuery::Req
 }
     
 bool NavigationNode::PlanPath(cartographer_ros_msgs::PathPlan::Request &req,
-                              cartographer_ros_msgs::PathPlan::Response &res) const {
-    res.path = PlanPathRRT(req.start_point,req.end_point);
+                              cartographer_ros_msgs::PathPlan::Response &res) {
+    geometry_msgs::Point start_point = req.start_point;
+    geometry_msgs::Point end_point = req.end_point;
+    res.path = PlanPathRRT(start_point,end_point);
     return true;
 }
     
@@ -640,7 +643,7 @@ void NavigationNode::IsClickedPointFree(const geometry_msgs::PointStamped::Const
     std::cout<<std::endl;
 }
 
-void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg) const {
+void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg) {
     std::cout<<"Received Goal:"<<msg->point.x<<","<<msg->point.y<<std::endl;
     geometry_msgs::Point departure;
     departure.x = 0.01;

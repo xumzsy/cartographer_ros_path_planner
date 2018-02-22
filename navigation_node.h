@@ -20,9 +20,11 @@
 #include "cartographer_ros_msgs/ConnectionQuery.h"
 #include "cartographer_ros_msgs/PathPlan.h"
 #include "cartographer_ros_msgs/ReconnectSubmaps.h"
+
 #include "geometry_msgs/PointStamped.h"
 #include "nav_msgs/Path.h"
 #include "ros/ros.h"
+#include "ros/serialization.h"
 
 namespace cartographer_ros{
 namespace cartographer_ros_navigation {
@@ -47,6 +49,8 @@ public:
     NavigationNode(const NavigationNode&) = delete;
     NavigationNode& operator=(const NavigationNode&) = delete;
     
+    //
+
     // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
     int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index) const;
     bool IsPathLocalFree(const geometry_msgs::Point& start,
@@ -80,6 +84,7 @@ public:
     // Destroy all nodes in RRT
     void DestroyRRTree(RRTreeNode* root);
     
+
     // print out the current state for testing and debugging
     void PrintState();
     void AddDisplayPath(Path path);
@@ -108,6 +113,9 @@ private:
         std::vector<int> data;
     };
     
+    //
+    const std::map<SubmapIndex, SubmapGrid>& GetSubmapGrid(){return submap_grid_;}
+
     // Add a submap grid into submap_grid_
     void AddSubmapGrid(SubmapIndex submap_index);
     
@@ -143,19 +151,19 @@ private:
     ::ros::ServiceServer plan_path_server_;
     ::ros::ServiceServer reconnect_submaps_server_;
     bool QueryRoadmap(cartographer_ros_msgs::RoadmapQuery::Request &req,
-                      cartographer_ros_msgs::RoadmapQuery::Response &res) const;
+                      cartographer_ros_msgs::RoadmapQuery::Response &res);
     bool QueryConnection(cartographer_ros_msgs::ConnectionQuery::Request &req,
-                         cartographer_ros_msgs::ConnectionQuery::Response &res) const;
+                         cartographer_ros_msgs::ConnectionQuery::Response &res);
     bool PlanPath(cartographer_ros_msgs::PathPlan::Request &req,
-                  cartographer_ros_msgs::PathPlan::Response &res) const;
-    bool ReconnectSubmapService(cartographer_ros_msgs::ReconnectSubmaps &req,
-                                cartographer_ros_msgs::ReconnectSubmaps &res);
+                  cartographer_ros_msgs::PathPlan::Response &res);
+    bool ReconnectSubmapService(cartographer_ros_msgs::ReconnectSubmaps::Request &req,
+                                cartographer_ros_msgs::ReconnectSubmaps::Response &res);
     void PublishPath(const ::ros::WallTimerEvent& timer_event);
     
     // For test and display
     ::ros::Subscriber clicked_point_subscriber_ GUARDED_BY(mutex_);
     void IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg) const;
-    void NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg) const;
+    void NavigateToClickedPoint(const geometry_msgs::PointStamped::ConstPtr& msg);
 };
     
 } // namespace cartographer_ros_navigation
