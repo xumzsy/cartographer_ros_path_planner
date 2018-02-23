@@ -1,5 +1,5 @@
 //
-//  node.hpp
+//  node.h
 //  
 //
 //
@@ -32,13 +32,6 @@ namespace cartographer_ros_navigation {
 using SubmapIndex = int;
 using Path = std::vector<geometry_msgs::Point>;
     
-struct RRTreeNode{
-    geometry_msgs::Point point;
-    RRTreeNode* parent_node;
-    std::vector<RRTreeNode*> children_node;
-    RRTreeNode(geometry_msgs::Point p){point=p;parent_node=nullptr;children_node.clear();}
-};
-
 // Node to provide navigation for cartographer
 class NavigationNode{
 public:
@@ -48,8 +41,6 @@ public:
     
     NavigationNode(const NavigationNode&) = delete;
     NavigationNode& operator=(const NavigationNode&) = delete;
-    
-    //
 
     // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
     int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index) const;
@@ -78,13 +69,6 @@ public:
     // Functions for RRT
     geometry_msgs::Point RandomFreePoint(const std::vector<SubmapIndex>& submap_indexes);
     
-    // Search the nearest node in RRT
-    RRTreeNode* NearestRRTreeNode(RRTreeNode* root, const geometry_msgs::Point& target);
-    
-    // Destroy all nodes in RRT
-    void DestroyRRTree(RRTreeNode* root);
-    
-
     // print out the current state for testing and debugging
     void PrintState();
     void AddDisplayPath(Path path);
@@ -113,9 +97,6 @@ private:
         std::vector<int> data;
     };
     
-    //
-    const std::map<SubmapIndex, SubmapGrid>& GetSubmapGrid(){return submap_grid_;}
-
     // Add a submap grid into submap_grid_
     void AddSubmapGrid(SubmapIndex submap_index);
     

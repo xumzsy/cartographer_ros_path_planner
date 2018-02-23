@@ -5,7 +5,6 @@
 //
 
 
-#include <iostream>
 #include <math.h>
 #include <map>
 #include <vector>
@@ -29,10 +28,12 @@
 #include "cartographer_ros/submap.h"
 #include "cartographer_ros_msgs/SubmapList.h"
 #include "cartographer_ros_msgs/SubmapQuery.h"
-
-#include "navigation_node.h"
 #include "nav_msgs/Path.h"
 #include "ros/ros.h"
+
+#include "common.h"
+#include "kd_tree.h"
+#include "navigation_node.h"
 
 
 namespace cartographer_ros{
@@ -60,39 +61,15 @@ const float kRotationThresholdForUpdating = 1.0;
 const float kProbabilityGridResolution = 0.05;
 const float kProbabilityOfChooseEndPoint = 0.1;
 const float kRRTGrowStep = 0.2;    
-    
-float Distance2BetweenPose(const geometry_msgs::Pose& pose1, const geometry_msgs::Pose& pose2){
-    return (pose1.position.x-pose2.position.x)*(pose1.position.x-pose2.position.x)+
-    (pose1.position.y-pose2.position.y)*(pose1.position.y-pose2.position.y)
-    /*+(pose1.position.z-pose2.position.z)*(pose1.position.z-pose2.position.z)*/;
-}
-    
-float Distance2BetweenPoint(const geometry_msgs::Point& point1, const geometry_msgs::Point& point2){
-    return (point1.x-point2.x)*(point1.x-point2.x) + (point1.y-point2.y)*(point1.y-point2.y);
-}
+const float kRRTTrimRadius = 5.0;
     
 float RotationBetweenPose(const geometry_msgs::Pose& pose1, const geometry_msgs::Pose& pose2){
     return abs(pose1.orientation.z-pose1.orientation.z);
 }
 
+// Judge a intensity val free or not
 bool IsValueFree(int val){
-    return val>=0 && val<kOccupyThreshhold;
-}
-    
-geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
-    geometry_msgs::Point sum;
-    sum.x = a.x + b.x;
-    sum.y = a.y + b.y;
-    sum.z = a.z + b.z;
-    return sum;
-}
-    
-geometry_msgs::Point operator*(float a, const geometry_msgs::Point& b){
-    geometry_msgs::Point product;
-    product.x = a * b.x;
-    product.y = a * b.y;
-    product.z = a * b.z;
-    return product;
+    return 0<=val && val<kOccupyThreshhold;
 }
     
 // calculate the path length
@@ -103,18 +80,6 @@ float LengthOfPath(const Path& path){
         length += sqrt(distance2);
     }
     return length;
-}
-
-std::ostream& operator<<(std::ostream& os, const geometry_msgs::Point& point){
-    os<<" "<<point.x<<","<<point.y<<","<<point.z<<" ";
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, Path& path){
-    for(geometry_msgs::Point& point: path){
-        os<<point<<std::endl;
-    }
-    return os;
 }
   
 } // namespace
@@ -392,31 +357,6 @@ geometry_msgs::Point NavigationNode::RandomFreePoint(const std::vector<SubmapInd
     }
 }
     
-// Return the pointer to the nearest node to target in RRT
-RRTreeNode* NavigationNode::NearestRRTreeNode(RRTreeNode* root, const geometry_msgs::Point& target){
-    RRTreeNode* nearest_node = root;
-    float min_distance = FLT_MAX;
-    
-    std::queue<RRTreeNode*> node_to_visit;
-    node_to_visit.push(root);
-    
-    while(!node_to_visit.empty()){
-        RRTreeNode* current_node = node_to_visit.front();
-        float distance2 = Distance2BetweenPoint(target,current_node->point);
-        if(distance2 < min_distance){
-            min_distance = distance2;
-            nearest_node = current_node;
-        }
-
-        for(RRTreeNode* node:current_node->children_node ){
-            if( current_node->children_node.size()>20) break;
-            node_to_visit.push(node);
-        }
-
-        if(!node_to_visit.empty()) node_to_visit.pop();
-    }
-    return nearest_node;
-}
 
 // Service to reconnect two submaps
 bool NavigationNode::ReconnectSubmapService(::cartographer_ros_msgs::ReconnectSubmaps::Request &req,
@@ -425,17 +365,8 @@ bool NavigationNode::ReconnectSubmapService(::cartographer_ros_msgs::ReconnectSu
     return true;
 }
     
-// Destropy the RRT tree
-void NavigationNode::DestroyRRTree(RRTreeNode* root){
-    if(root!=nullptr){
-        for(auto& child:root->children_node){
-            DestroyRRTree(child);
-        }
-        delete(root);
-    }
-}
     
-//
+// Locally Plan the Path using RRT
 Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
                                       const geometry_msgs::Point& end_point,
                                       const std::vector<SubmapIndex> submap_indexes){
@@ -446,9 +377,10 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
     }
     
     Path path;
-    RRTreeNode* root = new RRTreeNode (start_point);
+    KdTree kd_tree (start_point);
     for(int node_num=0;node_num<kMaxRRTNodeNum;node_num++){
         // Genearate Random Point
+        // TODO: biased sampling
         geometry_msgs::Point next_point;
         if((rand() % 1000) / 1000.0 < kProbabilityOfChooseEndPoint){
             next_point = (end_point);
@@ -457,34 +389,44 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         }
         
         // search the nearest tree node (better method expeced but now just linear search
-        RRTreeNode* nearest_node = NearestRRTreeNode(root,next_point);
+        KdTreeNode* nearest_node = kd_tree.NearestKdTreeNode(next_point);
+        
+        // TODO: Further may change to steer(next_point, nearest_node->point)
         next_point = (kRRTGrowStep)*next_point + (1-kRRTGrowStep)*nearest_node->point;
-        if(!IsPathLocalFree(nearest_node->point,next_point,submap_indexes)){node_num--;continue;}
-        RRTreeNode* next_node = new RRTreeNode(next_point);
         
-        // add next_node into RRT
+        if(!IsPathLocalFree(nearest_node->point, next_point, submap_indexes)){node_num--;continue;}
+        // Add next_node into RRT
+        KdTreeNode* next_node = kd_tree.AddPointToKdTree(next_point);
+        next_node->distance = nearest_node->distance + sqrt(Distance2BetweenPoint(next_point, nearest_node->point));
         next_node->parent_node = nearest_node;
-        nearest_node->children_node.push_back(next_node);
         
-        // try to connect RRT and end point
+        // Trim RRT
+        auto near_nodes = kd_tree.NearKdTreeNode(next_point, kRRTTrimRadius);
+        for(auto& near_node : near_nodes){
+            float edge_length = sqrt(Distance2BetweenPoint(next_point, near_node->point));
+            if(edge_length + next_node->distance < near_node->distance){
+                near_node->parent_node = next_node;
+                near_node->distance = edge_length + next_node;
+            }
+        }
+        
+        // Try to connect RRT and end point
         if(node_num % kStepToCheckReachEndPoint == 0){
             std::cout<<"Try to connect End point! Node Num:"<<node_num<<std::endl;
-            RRTreeNode* node = NearestRRTreeNode(root,end_point);
-            if(IsPathLocalFree(node->point,end_point,submap_indexes)){
+            const KdTreeNode* path_node = kd_tree.NearestKdTreeNode(end_point);
+            if(IsPathLocalFree(path_node->point,end_point,submap_indexes)){
                 // find the path!
-                while(node!=nullptr){
-                    path.insert(path.begin(),node->point);
-                    node = node->parent_node;
+                while(path_node!=nullptr){
+                    path.insert(path.begin(),path_node->point);
+                    path_node = path_node->parent_node;
                 }
                 path.push_back(end_point);
                 std::cout<<"Successfully find a path!"<<std::endl;
-                DestroyRRTree(root);
                 return path;
             }
         }
     }
     std::cout<<"Fail to find a path from submap!"<<std::endl;
-    DestroyRRTree(root);
     return {};
 }
     
