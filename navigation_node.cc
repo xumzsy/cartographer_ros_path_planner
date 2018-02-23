@@ -49,21 +49,21 @@ const char kSubmapQueryServiceName [] = "/submap_query";
 const char kRoadmapQueryServiceName [] = "/roadmap_query";
 const char kConnectionQueryServiceName [] = "/connection_query";
 const char kReconnectSubmapsServiceName [] = "/reconnect_submaps";
-const char kPathPlanServiceName [] = "plan_path";
+const char kPathPlanServiceName [] = "/plan_path";
 const int kFinishVersion = 180;
 const int kOccupyThreshhold = 64;
-const int kMaxRRTNodeNum = 200;
-const int kStepToCheckReachEndPoint = 25;
-const float kOccupyGridResolution = 0.05;
-const float kDistance2ThresholdForAdding = 20.0;
-const float kDistance2ThresholdForUpdating = 1.0;
-const float kRotationThresholdForUpdating = 1.0;
-const float kProbabilityGridResolution = 0.05;
-const float kProbabilityOfChooseEndPoint = 0.1;
-const float kRRTGrowStep = 0.2;    
-const float kRRTTrimRadius = 5.0;
+//const int kMaxRRTNodeNum = 200;
+//const int kStepToCheckReachEndPoint = 25;
+const double kOccupyGridResolution = 0.05;
+//const double kDistance2ThresholdForAdding = 20.0;
+//const double kDistance2ThresholdForUpdating = 1.0;
+//const double kRotationThresholdForUpdating = 1.0;
+const double kProbabilityGridResolution = 0.05;
+//const double kProbabilityOfChooseEndPoint = 0.1;
+//const double kRRTGrowStep = 0.2;
+//const double kRRTTrimRadius = 5.0;
     
-float RotationBetweenPose(const geometry_msgs::Pose& pose1, const geometry_msgs::Pose& pose2){
+double RotationBetweenPose(const geometry_msgs::Pose& pose1, const geometry_msgs::Pose& pose2){
     return abs(pose1.orientation.z-pose1.orientation.z);
 }
 
@@ -73,10 +73,10 @@ bool IsValueFree(int val){
 }
     
 // calculate the path length
-float LengthOfPath(const Path& path){
-    float length = 0.0;
+double LengthOfPath(const Path& path){
+    double length = 0.0;
     for(size_t i=0;i<path.size()-1;i++){
-        float distance2 = Distance2BetweenPoint(path[i],path[i+1]);
+        double distance2 = Distance2BetweenPoint(path[i],path[i+1]);
         length += sqrt(distance2);
     }
     return length;
@@ -89,6 +89,7 @@ float LengthOfPath(const Path& path){
 NavigationNode::NavigationNode(){
 
     cartographer::common::MutexLocker lock(&mutex_);
+    SetParameters();
     submap_list_subscriber_ = node_handle_.subscribe<cartographer_ros_msgs::SubmapList>(kSubmapListTopicName,10, &NavigationNode::UpdateRoadMap,this);
     submap_query_client_ = node_handle_.serviceClient<cartographer_ros_msgs::SubmapQuery>(kSubmapQueryServiceName);
 
@@ -106,14 +107,45 @@ NavigationNode::NavigationNode(){
     std::cout<<"Successfully Create NavigationNode"<<std::endl;
 }
 
+    
+// Set Parameters
+void NavigationNode::SetParameters(){
+    if(!node_handle_.getParam("max_rrt_node_num" ,parameters_.max_rrt_node_num)){
+        std::cout<<"Error! Fail to get paramter: max_rrt_node_num"<<std::endl;
+    }
+    if(!node_handle_.getParam("step_to_check_reach_endpoint" ,parameters_.step_to_check_reach_endpoint)){
+        std::cout<<"Error! Fail to get paramter: step_to_check_reach_endpoint "<<std::endl;
+    }
+    if(!node_handle_.getParam("distance_threshold_for_adding" ,parameters_.distance2_threshold_for_adding)){
+        std::cout<<"Error! Fail to get paramter: distance_threshold_for_adding"<<std::endl;
+    }
+    parameters_.distance2_threshold_for_adding *= parameters_.distance2_threshold_for_adding;
+    if(!node_handle_.getParam("distance_threshold_for_updating" ,parameters_.distance2_threshold_for_updating)){
+        std::cout<<"Error! Fail to get paramter: distance_threshold_for_updating"<<std::endl;
+    }
+    parameters_.distance2_threshold_for_updating *= parameters_.distance2_threshold_for_updating;
+    if(!node_handle_.getParam("rotation_threshold_for_updating" ,parameters_.rotation_threshold_for_updating)){
+        std::cout<<"Error! Fail to get paramter: rotation_threshold_for_updating"<<std::endl;
+    }
+    if(!node_handle_.getParam("probability_of_choose_endpoint" ,parameters_.probability_of_choose_endpoint)){
+        std::cout<<"Error! Fail to get paramter: probability_of_choose_endpoint"<<std::endl;
+    }
+    if(!node_handle_.getParam("rrt_grow_step" ,parameters_.rrt_grow_step)){
+        std::cout<<"Error! Fail to get paramter: rrt_grow_step"<<std::endl;
+    }
+    if(!node_handle_.getParam("rrt_trim_radius" ,parameters_.rrt_trim_radius)){
+        std::cout<<"Error! Fail to get paramter: rrt_trim_radius"<<std::endl;
+    }
+}
+    
 // Return the cloest SubmapID if pose is free in this submap
 SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Point& point) {
-    float min_distance = FLT_MAX;
+    double min_distance = DBL_MAX;
     SubmapIndex cloest_submap = -1;
     for(auto& submap:submap_){
         int val = IsLocalFree(point, submap.first);
         if(!IsValueFree(val)) continue;
-        float distance2 = Distance2BetweenPoint(submap.second.pose.position,point);
+        double distance2 = Distance2BetweenPoint(submap.second.pose.position,point);
         if(distance2<min_distance){
             min_distance = distance2;
             cloest_submap = submap.first;
@@ -212,9 +244,9 @@ bool NavigationNode::IsPathLocalFree(const geometry_msgs::Point& start,
                                      const geometry_msgs::Point& end,
                                      const std::vector<SubmapIndex>& submap_indexs) const {
     std::cout<<"Begin Check Local Path"<<std::endl;
-    float distance2 = Distance2BetweenPoint(start,end);
-    float step = kOccupyGridResolution / sqrt(distance2);
-    for(float i=0;i<=1;i+=step){
+    double distance2 = Distance2BetweenPoint(start,end);
+    double step = kOccupyGridResolution / sqrt(distance2);
+    for(double i=0;i<=1;i+=step){
         geometry_msgs::Point point = (1.0-i) * start + i * end;
         bool is_free = false;
         for(auto submap_index:submap_indexs){
@@ -296,7 +328,7 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
 // Return a path connect two submaps (BFS)
 Path NavigationNode::ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx){
     std::queue<SubmapIndex> submap_to_visit;
-    std::vector<float> visited_submap_distance (submap_.size(),FLT_MAX);
+    std::vector<double> visited_submap_distance (submap_.size(),DBL_MAX);
     std::vector<SubmapIndex> previous_submap (submap_.size(),-1);
 
     submap_to_visit.push(start_idx);
@@ -378,11 +410,11 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
     
     Path path;
     KdTree kd_tree (start_point);
-    for(int node_num=0;node_num<kMaxRRTNodeNum;node_num++){
+    for(int node_num=0;node_num<parameters_.max_rrt_node_num;node_num++){
         // Genearate Random Point
         // TODO: biased sampling
         geometry_msgs::Point next_point;
-        if((rand() % 1000) / 1000.0 < kProbabilityOfChooseEndPoint){
+        if((rand() % 1000) / 1000.0 < parameters_.probability_of_choose_endpoint){
             next_point = (end_point);
         } else{
             next_point =  RandomFreePoint(submap_indexes);
@@ -392,7 +424,7 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         KdTreeNode* nearest_node = kd_tree.NearestKdTreeNode(next_point);
         
         // TODO: Further may change to steer(next_point, nearest_node->point)
-        next_point = (kRRTGrowStep)*next_point + (1-kRRTGrowStep)*nearest_node->point;
+        next_point = (parameters_.rrt_grow_step)*next_point + (1-parameters_.rrt_grow_step)*nearest_node->point;
         
         if(!IsPathLocalFree(nearest_node->point, next_point, submap_indexes)){node_num--;continue;}
         // Add next_node into RRT
@@ -401,9 +433,9 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         next_node->parent_node = nearest_node;
         
         // Trim RRT
-        auto near_nodes = kd_tree.NearKdTreeNode(next_point, kRRTTrimRadius);
+        auto near_nodes = kd_tree.NearKdTreeNode(next_point, parameters_.rrt_trim_radius);
         for(auto& near_node : near_nodes){
-            float edge_length = sqrt(Distance2BetweenPoint(next_point, near_node->point));
+            double edge_length = sqrt(Distance2BetweenPoint(next_point, near_node->point));
             if(edge_length + next_node->distance < near_node->distance){
                 near_node->parent_node = next_node;
                 near_node->distance = edge_length + next_node;
@@ -411,7 +443,7 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         }
         
         // Try to connect RRT and end point
-        if(node_num % kStepToCheckReachEndPoint == 0){
+        if(node_num % parameters_.step_to_check_reach_endpoint == 0){
             std::cout<<"Try to connect End point! Node Num:"<<node_num<<std::endl;
             const KdTreeNode* path_node = kd_tree.NearestKdTreeNode(end_point);
             if(IsPathLocalFree(path_node->point,end_point,submap_indexes)){
@@ -450,7 +482,7 @@ Path NavigationNode::PlanPathRRT(SubmapIndex start_idx, SubmapIndex end_idx){
 bool NavigationNode::ReconnectSubmaps(SubmapIndex start_idx, SubmapIndex end_idx){
     Path path = PlanPathRRT(start_idx,end_idx);
     if(path.empty()) return false;
-    float path_length = LengthOfPath(path);
+    double path_length = LengthOfPath(path);
     SubmapConnectState start_submap_connection_state (start_idx,end_idx,path_length);
     SubmapConnectState end_submap_connection_state (end_idx,end_idx,path_length);
     start_submap_connection_state.path = path;
@@ -474,8 +506,8 @@ void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
         auto& other_submap_entry = pair.second;
         if(other_submap_entry.submap_index==submap_entry.submap_index) continue;
         
-        float distance2 = Distance2BetweenPose(submap_entry.pose,other_submap_entry.pose);
-        if(distance2 < kDistance2ThresholdForAdding || 
+        double distance2 = Distance2BetweenPose(submap_entry.pose,other_submap_entry.pose);
+        if(distance2 < parameters_.distance2_threshold_for_adding ||
             other_submap_entry.submap_index-submap_entry.submap_index==1 ||
             other_submap_entry.submap_index-submap_entry.submap_index==-1){
             
@@ -487,7 +519,7 @@ void NavigationNode::AddRoadMapEntry(const SubmapIndex submap_index){
                 continue;
             }
             // add into road_map
-            float path_length = LengthOfPath(path);
+            double path_length = LengthOfPath(path);
             SubmapConnectState submap_connect_state (submap_entry.submap_index,
                                                      other_submap_entry.submap_index,
                                                      path_length);
@@ -521,9 +553,10 @@ void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::Cons
             AddRoadMapEntry(submap_index);
         } else{
             auto& old_submap_entry = submap_[submap_index];
-            float distance2 = Distance2BetweenPose(old_submap_entry.pose,submap_entry.pose);
-            float rotation = RotationBetweenPose(old_submap_entry.pose,submap_entry.pose);
-            if(rotation>kRotationThresholdForUpdating || distance2>kDistance2ThresholdForUpdating){
+            double distance2 = Distance2BetweenPose(old_submap_entry.pose,submap_entry.pose);
+            double rotation = RotationBetweenPose(old_submap_entry.pose,submap_entry.pose);
+            if(rotation > parameters_.rotation_threshold_for_updating ||
+               distance2 > parameters_.distance2_threshold_for_updating){
                 submap_[submap_index] = submap_entry;
                 AddSubmapGrid(submap_index);
                 AddRoadMapEntry(submap_index);

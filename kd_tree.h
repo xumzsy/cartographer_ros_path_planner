@@ -24,7 +24,7 @@ struct KdTreeNode{
     KdTreeNode* right_node;         // used for kd tree
     
     KdTreeNode* parent_node;        // Used for plan planning
-    float distance;                 // Used for plan planning
+    double distance;                 // Used for plan planning
     KdTreeNode(geometry_msgs::Point p) : point(p), parent_node(nullptr), distance (0.0),
                                          left_node(nullptr), right_node(nullptr){}
     
@@ -36,7 +36,7 @@ public:
     KdTree* NearestKdTreeNode(const geometry_msgs::Point& target) const;
     
     // Return near nodes around target within radius
-    std::vector<KdTreeNode*> NearKdTreeNode(const geometry_msgs::Point& target, float radius) const;
+    std::vector<KdTreeNode*> NearKdTreeNode(const geometry_msgs::Point& target, double radius) const;
     
     // Add a new point into RRT tree
     KdTreeNode* AddPointToKdTree(geometry_msgs::Point point);
@@ -48,7 +48,7 @@ public:
 
     // For test
     KdTreeNode* BruceNearestKdTreeNode(const geometry_msgs::Point& point);
-    std::vector<KdTreeNode*> BruceNearKdTreeNode(const geometry_msgs::Point& target, float radius);
+    std::vector<KdTreeNode*> BruceNearKdTreeNode(const geometry_msgs::Point& target, double radius);
     
 private:
     
@@ -56,12 +56,12 @@ private:
     void SearchKdTreeNode(const geometry_msgs::Point& target,
                           KdTreeNode* current_node,
                           KdTreeNode*& current_nearest_node,
-                          float& current_cloest_distance2,
+                          double& current_cloest_distance2,
                           int depth) const;
     void SearchKdTreeNode(const geometry_msgs::Point& target,
                           KdTreeNode* current_node,
                           std::vector<KdTreeNode*>& near_nodes,
-                          float radius,
+                          double radius,
                           int depth) const;
     // Destroy RRT
     void DestroyRRT(KdTreeNode* root);

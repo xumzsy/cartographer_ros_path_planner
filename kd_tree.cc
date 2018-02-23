@@ -4,7 +4,6 @@
  */
 
 #include <queue>
-#include <float.h>
 
 #include "common.h"
 #include "kd_tree.h"
@@ -15,14 +14,14 @@ namespace cartographer_ros_navigation{
 // Return nearest node to target
 KdTreeNode* KdTree::NearestKdTreeNode(const geometry_msgs::Point& target) const {
     KdTreeNode* nearest_node = nullptr;
-    float closest_distance2 = FLT_MAX;
+    double closest_distance2 = DBL_MAX;
     SearchKdTreeNode(target, root_, nearest_node, closest_distance2,0);
     return nearest_node;
 }
     
 // Return near nodes around target within radius
 std::vector<KdTreeNode*> KdTree::NearKdTreeNode(const geometry_msgs::Point& target,
-                                                float radius) const {
+                                                double radius) const {
     std::vector<KdTreeNode*> near_nodes;
     SearchKdTreeNode(target,root_,near_nodes,radius * radius,0);
     return near_nodes;
@@ -32,10 +31,10 @@ std::vector<KdTreeNode*> KdTree::NearKdTreeNode(const geometry_msgs::Point& targ
 void KdTree::SearchKdTreeNode(const geometry_msgs::Point& target,
                               KdTreeNode* current_node,
                               KdTreeNode*& current_nearest_node,
-                              float& current_cloest_distance2,
+                              double& current_cloest_distance2,
                               int depth) const{
     if(current_node==nullptr) return;
-    float distance2 = Distance2BetweenPoint(target, current_node->point);
+    double distance2 = Distance2BetweenPoint(target, current_node->point);
     bool go_to_left = depth%2==0 ? target.x <= current_node->point.x   // Compare x
     : target.y <= current_node->point.y;  // Compare y
     // Recursively visit children
@@ -52,7 +51,7 @@ void KdTree::SearchKdTreeNode(const geometry_msgs::Point& target,
     }
     
     // Judge whether search other side
-    float discard_threshold = depth%2==0
+    double discard_threshold = depth%2==0
     ?   (target.x - current_node->point.x) * (target.x - current_node->point.x)
     :   (target.y - current_node->point.y) * (target.y - current_node->point.y);
     if(current_cloest_distance2 > discard_threshold){
@@ -67,10 +66,10 @@ void KdTree::SearchKdTreeNode(const geometry_msgs::Point& target,
 void KdTree::SearchKdTreeNode(const geometry_msgs::Point& target,
                               KdTreeNode* current_node,
                               std::vector<KdTreeNode*>& near_nodes,
-                              float radius,
+                              double radius,
                               int depth) const{
     if(current_node==nullptr) return;
-    float distance2 = Distance2BetweenPoint(target, current_node->point);
+    double distance2 = Distance2BetweenPoint(target, current_node->point);
     // Visit current node
     if(distance2 < radius) near_nodes.push_back(current_node);
     
@@ -84,7 +83,7 @@ void KdTree::SearchKdTreeNode(const geometry_msgs::Point& target,
     }
     
     // Visit the otherside
-    float discard_threshold = depth%2==0
+    double discard_threshold = depth%2==0
     ?   (target.x - current_node->point.x) * (target.x - current_node->point.x)
     :   (target.y - current_node->point.y) * (target.y - current_node->point.y);
     if(radius > discard_threshold){
@@ -134,11 +133,11 @@ void KdTree::DestroyRRT(KdTreeNode* root){
 // For test
 KdTreeNode* KdTree::BruceNearestKdTreeNode(const geometry_msgs::Point& target){
     KdTreeNode* nearest_node = nullptr;
-    float min_distance2 = FLT_MAX;
+    double min_distance2 = DBL_MAX;
     std::queue<KdTreeNode*> q;
     q.push(root_);
     while(!q.empty()){
-        float distance2 = Distance2BetweenPoint(target, q.front()->point);
+        double distance2 = Distance2BetweenPoint(target, q.front()->point);
         if(distance2<min_distance2){
             min_distance2 = distance2;
             nearest_node = q.front();
@@ -152,12 +151,12 @@ KdTreeNode* KdTree::BruceNearestKdTreeNode(const geometry_msgs::Point& target){
 
 
 std::vector<KdTreeNode*> KdTree::BruceNearKdTreeNode(const geometry_msgs::Point& target,
-                                                              float radius){
+                                                              double radius){
     std::vector<KdTreeNode*> bruce_near_nodes;
     std::queue<KdTreeNode*> q;
     q.push(root_);
     while(!q.empty()){
-        float distance2 = Distance2BetweenPoint(target, q.front()->point);
+        double distance2 = Distance2BetweenPoint(target, q.front()->point);
         if(distance2 < radius){
             bruce_near_nodes.push_back(q.front());
         }

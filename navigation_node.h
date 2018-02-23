@@ -32,6 +32,18 @@ namespace cartographer_ros_navigation {
 using SubmapIndex = int;
 using Path = std::vector<geometry_msgs::Point>;
     
+// parameters
+struct Parameters{
+    int max_rrt_node_num;
+    int step_to_check_reach_endpoint;
+    double distance2_threshold_for_adding;
+    double distance2_threshold_for_updating;
+    double rotation_threshold_for_updating;
+    double probability_of_choose_endpoint;
+    double rrt_grow_step;
+    double rrt_trim_radius;
+};
+    
 // Node to provide navigation for cartographer
 class NavigationNode{
 public:
@@ -42,6 +54,9 @@ public:
     NavigationNode(const NavigationNode&) = delete;
     NavigationNode& operator=(const NavigationNode&) = delete;
 
+    // Set Parameters
+    void SetParameters();
+    
     // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
     int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index) const;
     bool IsPathLocalFree(const geometry_msgs::Point& start,
@@ -77,11 +92,11 @@ private:
     struct SubmapConnectState{
         SubmapIndex start_submap_index;
         SubmapIndex end_submap_index;
-        float length;
+        double length;
         Path path;
         
         SubmapConnectState(){};
-        SubmapConnectState(SubmapIndex start_index, SubmapIndex end_index, float d) :
+        SubmapConnectState(SubmapIndex start_index, SubmapIndex end_index, double d) :
         start_submap_index(start_index),
         end_submap_index(end_index),
         length(d) {};
@@ -109,8 +124,10 @@ private:
     // Update submap_, road_map_ and submap_grid_ every time receive submapList
     void UpdateRoadMap(const cartographer_ros_msgs::SubmapList::ConstPtr& msg);
     
+    
     ::cartographer::common::Mutex mutex_;
-    ::ros::NodeHandle node_handle_ GUARDED_BY(mutex_); 
+    ::ros::NodeHandle node_handle_ GUARDED_BY(mutex_);
+    Parameters parameters_;
     ::ros::Subscriber submap_list_subscriber_ GUARDED_BY(mutex_);
     ::ros::ServiceClient submap_query_client_ GUARDED_BY(mutex_);
     
