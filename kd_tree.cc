@@ -106,14 +106,14 @@ KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, KdTreeNode* par
             parent->left_node = new KdTreeNode(point);
             return parent->left_node;
         } else{
-            AddPointToKdTree(point, parent->left_node, depth+1);
+            return AddPointToKdTree(point, parent->left_node, depth+1);
         }
     } else{
         if(parent->right_node==nullptr){
             parent->right_node = new KdTreeNode(point);
             return parent->right_node;
         } else{
-            AddPointToKdTree(point, parent->right_node, depth+1);
+            return AddPointToKdTree(point, parent->right_node, depth+1);
         }
     }
 }

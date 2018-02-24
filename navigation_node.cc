@@ -63,6 +63,34 @@ const double kProbabilityGridResolution = 0.05;
 //const double kRRTGrowStep = 0.2;
 //const double kRRTTrimRadius = 5.0;
     
+geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
+    geometry_msgs::Point sum;
+    sum.x = a.x + b.x;
+    sum.y = a.y + b.y;
+    sum.z = a.z + b.z;
+    return sum;
+}
+
+geometry_msgs::Point operator*(double a, const geometry_msgs::Point& b){
+    geometry_msgs::Point product;
+    product.x = a * b.x;
+    product.y = a * b.y;
+    product.z = a * b.z;
+    return product;
+}
+
+std::ostream& operator<<(std::ostream& os, const geometry_msgs::Point& point){
+    os<<" "<<point.x<<","<<point.y<<","<<point.z<<" ";
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, Path& path){
+    for(geometry_msgs::Point& point: path){
+        os<<point<<std::endl;
+    }
+    return os;
+}
+
 double RotationBetweenPose(const geometry_msgs::Pose& pose1, const geometry_msgs::Pose& pose2){
     return abs(pose1.orientation.z-pose1.orientation.z);
 }
@@ -240,22 +268,19 @@ int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use
 }
 
 // Return whether a straight line between two points are free
-bool NavigationNode::IsPathLocalFree(const geometry_msgs::Point& start,
-                                     const geometry_msgs::Point& end,
+bool NavigationNode::IsPathLocalFree(const geometry_msgs::Point& start_point,
+                                     const geometry_msgs::Point& end_point,
                                      const std::vector<SubmapIndex>& submap_indexs) const {
     std::cout<<"Begin Check Local Path"<<std::endl;
-    double distance2 = Distance2BetweenPoint(start,end);
-    double step = kOccupyGridResolution / sqrt(distance2);
+    double distance2 = Distance2BetweenPoint(start_point,end_point);
+    double step = kOccupyGridResolution / sqrt(distance2) / 2.0;    
     for(double i=0;i<=1;i+=step){
-        geometry_msgs::Point point = (1.0-i) * start + i * end;
+        geometry_msgs::Point point = (1.0-i) * start_point + i * end_point;
         bool is_free = false;
         for(auto submap_index:submap_indexs){
             int val = IsLocalFree(point, submap_index);
             if(val>=kOccupyThreshhold) return false;
-            if(val!=-1){
-                is_free = true;
-                break;
-            }
+            if(val>=0) is_free = true;
         }
         if(!is_free) return false;
     }
@@ -376,15 +401,24 @@ geometry_msgs::Point NavigationNode::RandomFreePoint(const std::vector<SubmapInd
     while(true){
         int random_idx = rand() % submap_indexes.size();
         auto& submap_grid = submap_grid_.find(submap_indexes[random_idx])->second;
-        int random_x = rand() % submap_grid.width;
-        int random_y = rand() % submap_grid.height;
+        int random_x = rand() % (submap_grid.width);
+        int random_y = rand() % (submap_grid.height);
         int val = submap_grid.data[random_y * submap_grid.width + random_x];
         if(val>=0 && val<kOccupyThreshhold){
             geometry_msgs::Point point;
             point.x = random_x * submap_grid.resolution + submap_grid.x0;
             point.y = random_y * submap_grid.resolution + submap_grid.y0;
             point.z = 0.0;
-            return point;
+
+            // check if there's conflict in other submap
+            bool is_free = true;
+            for(auto other_submap:submap_indexes){
+                if(IsLocalFree(point,other_submap)>=kOccupyThreshhold){
+                    is_free = false;
+                    break;
+                }
+            }
+            if(is_free) return point;
         }
     }
 }
@@ -422,23 +456,25 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         
         // search the nearest tree node (better method expeced but now just linear search
         KdTreeNode* nearest_node = kd_tree.NearestKdTreeNode(next_point);
-        
+        if(nearest_node==nullptr) std::cout<<"Can not find nearest_node"<<std::endl;
         // TODO: Further may change to steer(next_point, nearest_node->point)
         next_point = (parameters_.rrt_grow_step)*next_point + (1-parameters_.rrt_grow_step)*nearest_node->point;
         
         if(!IsPathLocalFree(nearest_node->point, next_point, submap_indexes)){node_num--;continue;}
         // Add next_node into RRT
         KdTreeNode* next_node = kd_tree.AddPointToKdTree(next_point);
+        if(next_node==nullptr) std::cout<<"Fail to Add New Node"<<std::endl;
         next_node->distance = nearest_node->distance + sqrt(Distance2BetweenPoint(next_point, nearest_node->point));
         next_node->parent_node = nearest_node;
-        
         // Trim RRT
+        
         auto near_nodes = kd_tree.NearKdTreeNode(next_point, parameters_.rrt_trim_radius);
         for(auto& near_node : near_nodes){
             double edge_length = sqrt(Distance2BetweenPoint(next_point, near_node->point));
-            if(edge_length + next_node->distance < near_node->distance){
+            if(edge_length + next_node->distance < near_node->distance &&
+                IsPathLocalFree(near_node->point,next_point,submap_indexes)){
                 near_node->parent_node = next_node;
-                near_node->distance = edge_length + next_node;
+                near_node->distance = edge_length + next_node->distance;
             }
         }
         
@@ -446,6 +482,7 @@ Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         if(node_num % parameters_.step_to_check_reach_endpoint == 0){
             std::cout<<"Try to connect End point! Node Num:"<<node_num<<std::endl;
             const KdTreeNode* path_node = kd_tree.NearestKdTreeNode(end_point);
+            if(path_node==nullptr) std::cout<<"Can not find nearest_node to end point"<<std::endl;
             if(IsPathLocalFree(path_node->point,end_point,submap_indexes)){
                 // find the path!
                 while(path_node!=nullptr){
@@ -626,7 +663,11 @@ void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::C
     departure.z = 0.0;
     if(PlanPathRRT(departure,msg->point).empty()){
         std::cout<<"Fail to find a valid path!"<<std::endl;
+        SubmapIndex submap_index = CloestSubmap(msg->point);
+        std::cout<<departure<<" :: "<<submap_index<<", "<<IsLocalFree(msg->point,submap_index);
     }
+    SubmapIndex submap_index = CloestSubmap(msg->point);
+    std::cout<<departure<<" :: "<<submap_index<<", "<<IsLocalFree(msg->point,submap_index);
 }
     
 // print out the current state for testing and debugging
