@@ -68,8 +68,8 @@ public:
                          const std::vector<SubmapIndex>& submap_indexs) const;
     
     // Return the cloest SubmapIndex if pose is free in this submap
-    SubmapIndex CloestSubmap(const geometry_msgs::Point& point, double radius) const;
-    std::vector<SubmapIndex> CloseSubmaps(const geometry_msgs::Point& point) const;
+    SubmapIndex ClosestSubmap(const geometry_msgs::Point& point) const;
+    std::vector<SubmapIndex> CloseSubmaps(const geometry_msgs::Point& point, double radius) const;
     
     // Return a free path from starting position to end postion using RRT
     Path PlanPathRRT(const geometry_msgs::Point& start,

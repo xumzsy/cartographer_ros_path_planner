@@ -160,7 +160,7 @@ void NavigationNode::SetParameters(){
 }
     
 // Return the cloest SubmapID if pose is free in this submap
-SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Point& point) const{
+SubmapIndex NavigationNode::ClosestSubmap(const geometry_msgs::Point& point) const{
     /*
     double min_distance = DBL_MAX;
     SubmapIndex cloest_submap = -1;
@@ -256,7 +256,7 @@ void NavigationNode::AddSubmapGrid(SubmapIndex submap_index){
     
 // Return whether a point is free in a submap
 bool NavigationNode::IsFree(const geometry_msgs::Point& point) const{
-    auto& close_submaps = CloseSubmaps(point, kCloseSubmapRadius);
+    auto close_submaps = CloseSubmaps(point, kCloseSubmapRadius);
     bool is_free = false;
     for(auto submap_index:close_submaps){
         int val = IsLocalFree(point,submap_index);
@@ -286,8 +286,8 @@ int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use
 
 bool NavigationNode::IsPathFree(const geometry_msgs::Point& start_point,
                                 const geometry_msgs::Point& end_point) const{
-    auto& start_submap_indexes = CloseSubmaps(start_point, kCloseSubmapRadius);
-    auto& end_submap_indexes = CloseSubmaps(end_point, kCloseSubmapRadius);
+    auto start_submap_indexes = CloseSubmaps(start_point, kCloseSubmapRadius);
+    auto end_submap_indexes = CloseSubmaps(end_point, kCloseSubmapRadius);
     std::unordered_set<SubmapIndex> union_submap_indexes;
     for(SubmapIndex submap_index:start_submap_indexes){
         union_submap_indexes.insert(submap_index);
@@ -324,8 +324,8 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
                                  const geometry_msgs::Point& end_point) {
     std::cout<<"Begin planning!"<<std::endl;
     Path path;
-    SubmapIndex start_submap_index = CloestSubmap(start_point);
-    SubmapIndex end_submap_index = CloestSubmap(end_point);
+    SubmapIndex start_submap_index = ClosestSubmap(start_point);
+    SubmapIndex end_submap_index = ClosestSubmap(end_point);
     std::cout<<"start_submap_index: "<<start_submap_index<<", "<<"end_submap_index:"<<end_submap_index<<std::endl;
     
     // start and end point
@@ -462,12 +462,12 @@ bool NavigationNode::ReconnectSubmapService(::cartographer_ros_msgs::ReconnectSu
     
     
 // Locally Plan the Path using RRT
-Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
+Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
                       const geometry_msgs::Point& end_point){
-    SubmapIndex start_submap_index = CloestSubmap(start_point);
-    SubmapIndex end_submap_index = CloestSubmap(end_point);
-    auto& start_submap_indexes = CloseSubmaps(start_point, kCloseSubmapRadius);
-    auto& end_submap_indexes = CloseSubmaps(end_point, kCloseSubmapRadius);
+    SubmapIndex start_submap_index = ClosestSubmap(start_point);
+    SubmapIndex end_submap_index = ClosestSubmap(end_point);
+    auto start_submap_indexes = CloseSubmaps(start_point, kCloseSubmapRadius);
+    auto end_submap_indexes = CloseSubmaps(end_point, kCloseSubmapRadius);
     std::unordered_set<SubmapIndex> union_submap_indexes;
     for(SubmapIndex submap_index:start_submap_indexes){
         union_submap_indexes.insert(submap_index);
@@ -704,10 +704,10 @@ void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::C
     departure.z = 0.0;
     if(PlanPathRRT(departure,msg->point).empty()){
         std::cout<<"Fail to find a valid path!"<<std::endl;
-        SubmapIndex submap_index = CloestSubmap(msg->point);
+        SubmapIndex submap_index = ClosestSubmap(msg->point);
         std::cout<<departure<<" :: "<<submap_index<<", "<<IsLocalFree(msg->point,submap_index);
     }
-    SubmapIndex submap_index = CloestSubmap(msg->point);
+    SubmapIndex submap_index = ClosestSubmap(msg->point);
     std::cout<<departure<<" :: "<<submap_index<<", "<<IsLocalFree(msg->point,submap_index);
 }
     

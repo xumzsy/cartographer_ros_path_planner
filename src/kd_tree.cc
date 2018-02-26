@@ -111,7 +111,7 @@ KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point){
 }
 
 KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, int submap_index){
-    auto& added_node = AddPointToKdTree(point, root_, 0);
+    auto added_node = AddPointToKdTree(point, root_, 0);
     added_node->submap_index = submap_index;
     return added_node;
 }
