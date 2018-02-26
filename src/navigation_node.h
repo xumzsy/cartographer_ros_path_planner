@@ -83,6 +83,8 @@ public:
     
     // connecting two points in given submaps
     Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
+                          const geometry_msgs::Point& end_point);
+    Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
                           const geometry_msgs::Point& end_point,
                           const std::vector<SubmapIndex> submap_indexs);
     

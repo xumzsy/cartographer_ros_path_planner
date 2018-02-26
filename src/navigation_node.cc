@@ -9,6 +9,7 @@
 #include <map>
 #include <vector>
 #include <queue>
+#include <unordered_set>
 #include <string>
 #include <set>
 #include <stdlib.h>
@@ -339,16 +340,14 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
     
     // Edge case
     if(start_submap_index==end_submap_index){
-        std::vector<SubmapIndex> submap_indexes = {start_submap_index};
-        path = LocalPlanPathRRT(start_point,end_point,submap_indexes);
+        path = LocalPlanPathRRT(start_point,end_point);
         AddDisplayPath(path);
         return path;
     }
     
     // connecting start to start_submap
     std::cout<<"connecting start to start_submap"<<std::endl;
-    auto startpath = LocalPlanPathRRT(start_point,submap_[start_submap_index].pose.position,
-                                    std::vector<SubmapIndex> ({start_submap_index}));
+    auto startpath = LocalPlanPathRRT(start_point,submap_[start_submap_index].pose.position);
     if(!startpath.empty()){
         path.insert(path.end(),startpath.begin(),startpath.end());
     } else{
@@ -368,8 +367,7 @@ Path NavigationNode::PlanPathRRT(const geometry_msgs::Point& start_point,
     
     // connecting end_submap to end point
     std::cout<<" connecting end to end_submap"<<std::endl;
-    auto endpath = LocalPlanPathRRT(submap_[end_submap_index].pose.position,end_point,
-                                      std::vector<SubmapIndex> ({end_submap_index}));
+    auto endpath = LocalPlanPathRRT(submap_[end_submap_index].pose.position,end_point);
     if(!endpath.empty()){
         path.insert(path.end(),endpath.begin(),endpath.end());
     } else{
@@ -464,6 +462,25 @@ bool NavigationNode::ReconnectSubmapService(::cartographer_ros_msgs::ReconnectSu
     
     
 // Locally Plan the Path using RRT
+Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
+                      const geometry_msgs::Point& end_point){
+    SubmapIndex start_submap_index = CloestSubmap(start_point);
+    SubmapIndex end_submap_index = CloestSubmap(end_point);
+    auto& start_submap_indexes = CloseSubmaps(start_point, kCloseSubmapRadius);
+    auto& end_submap_indexes = CloseSubmaps(end_point, kCloseSubmapRadius);
+    std::unordered_set<SubmapIndex> union_submap_indexes;
+    for(SubmapIndex submap_index:start_submap_indexes){
+        union_submap_indexes.insert(submap_index);
+    }
+    for(SubmapIndex submap_index:end_submap_indexes){
+        union_submap_indexes.insert(submap_index);
+    }
+    union_submap_indexes.insert(start_submap_index);
+    union_submap_indexes.insert(end_submap_index);
+    std::vector<SubmapIndex> submap_indexes (union_submap_indexes.begin(),union_submap_indexes.end());
+    return LocalPlanPathRRT(start_point,end_point,submap_indexes);
+}
+    
 Path NavigationNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
                                       const geometry_msgs::Point& end_point,
                                       const std::vector<SubmapIndex> submap_indexes){
@@ -535,15 +552,7 @@ Path NavigationNode::PlanPathRRT(SubmapIndex start_idx, SubmapIndex end_idx){
     std::cout<<"Try to connect two submaps:"<<start_idx<<","<<end_idx<<std::endl;
     geometry_msgs::Point start_point = submap_[start_idx].pose.position;
     geometry_msgs::Point end_point = submap_[end_idx].pose.position;
-    std::vector<SubmapIndex> submap_indexs = {start_idx,end_idx};
-    
-    // Naively check the straight line between two points
-    if(IsPathLocalFree(start_point,end_point,submap_indexs)){
-        std::cout<<"Directly connect two submaps: "<<start_idx<<","<<end_idx<<std::endl;
-        return {start_point,end_point};
-    }
-    std::vector<SubmapIndex> submap_indexes = {start_idx,end_idx};
-    return LocalPlanPathRRT(start_point, end_point, submap_indexes);
+    return LocalPlanPathRRT(start_point, end_point);
 }
 
 // Reconnect two submaps
