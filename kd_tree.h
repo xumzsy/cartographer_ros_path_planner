@@ -24,10 +24,11 @@ struct KdTreeNode{
     double distance;                 // Used for plan planning
     KdTreeNode* left_node;          // Used for kd tree
     KdTreeNode* right_node;         // used for kd tree
+    int submap_index;               // usde for submaps
     
-    
-    KdTreeNode(geometry_msgs::Point p) : point(p), parent_node(nullptr), distance (0.0), 
-                                         left_node(nullptr), right_node(nullptr){}
+    KdTreeNode();
+    KdTreeNode(geometry_msgs::Point p);
+    KdTreeNode(geometry_msgs::Point p, int idx);
 };    
     
     
@@ -42,8 +43,10 @@ public:
     // Add a new point into RRT tree
     KdTreeNode* AddPointToKdTree(geometry_msgs::Point point);
     KdTreeNode* AddPointToKdTree(geometry_msgs::Point point, KdTreeNode* parent, int depth);
+    KdTreeNode* AddPointToKdTree(geometry_msgs::Point point, int submap_index);
 
     // Constructor
+    KdTree();
     KdTree(geometry_msgs::Point start_point);
     ~KdTree(){DestroyRRT(root_);}
 

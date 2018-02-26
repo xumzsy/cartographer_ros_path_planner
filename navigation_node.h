@@ -25,6 +25,7 @@
 #include "nav_msgs/Path.h"
 #include "ros/ros.h"
 #include "ros/serialization.h"
+#include "kd_tree.h"
 
 namespace cartographer_ros{
 namespace cartographer_ros_navigation {
@@ -57,23 +58,27 @@ public:
     // Set Parameters
     void SetParameters();
     
-    // Return whether a point is free in local frame (-1: Unobserved, 0: Free, 100: Occupied)
+    // Return whether a point is free in local submap
+    bool IsFree(const geometry_msgs::Point& point) const;
+    bool IsPathFree(const geometry_msgs::Point& start_point,
+                    const geometry_msgs::Point& end_point) const;
     int IsLocalFree(const geometry_msgs::Point& point, SubmapIndex submap_index) const;
-    bool IsPathLocalFree(const geometry_msgs::Point& start,
-                         const geometry_msgs::Point& end,
+    bool IsPathLocalFree(const geometry_msgs::Point& start_point,
+                         const geometry_msgs::Point& end_point,
                          const std::vector<SubmapIndex>& submap_indexs) const;
     
     // Return the cloest SubmapIndex if pose is free in this submap
-    SubmapIndex CloestSubmap(const geometry_msgs::Point& point);
+    SubmapIndex CloestSubmap(const geometry_msgs::Point& point, double radius) const;
+    std::vector<SubmapIndex> CloseSubmaps(const geometry_msgs::Point& point) const;
     
     // Return a free path from starting position to end postion using RRT
     Path PlanPathRRT(const geometry_msgs::Point& start,
                      const geometry_msgs::Point& end);
     
-    // Return a free path between submaps' origin
+    // Return a free path between submaps' origin using RRT
     Path PlanPathRRT(SubmapIndex start_idx, SubmapIndex end_idx);
     
-    // Returan a path connecting two remote submaps
+    // Returan a path connecting two remote submaps using graph search
     Path ConnectingSubmap(SubmapIndex start_idx, SubmapIndex end_idx);
     
     // connecting two points in given submaps
@@ -81,11 +86,10 @@ public:
                           const geometry_msgs::Point& end_point,
                           const std::vector<SubmapIndex> submap_indexs);
     
-    // Functions for RRT
+    // Generate random free point in given submaps
     geometry_msgs::Point RandomFreePoint(const std::vector<SubmapIndex>& submap_indexes);
     
     // print out the current state for testing and debugging
-    void PrintState();
     void AddDisplayPath(Path path);
     
 private:
@@ -134,13 +138,16 @@ private:
     // SubmapList
     std::map<SubmapIndex,cartographer_ros_msgs::SubmapEntry> submap_ GUARDED_BY(mutex_);
     
+    // Kd tree for Submap position
+    KdTree submap_kdtree_;
+    
     // SubmapGrid
     std::map<SubmapIndex, SubmapGrid> submap_grid_ GUARDED_BY(mutex_);
     
     // Road map to store the connectivity of submaps and corresponding path
     std::map<SubmapIndex,std::map<SubmapIndex,SubmapConnectState>> road_map_ GUARDED_BY(mutex_);
     
-    // ROS agent
+    // ROS Server
     nav_msgs::Path path_to_display_;
     ::ros::WallTimer path_publisher_timer_;
     ::ros::Publisher path_publisher_;

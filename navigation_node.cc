@@ -32,7 +32,6 @@
 #include "ros/ros.h"
 
 #include "common.h"
-#include "kd_tree.h"
 #include "navigation_node.h"
 
 
@@ -52,16 +51,9 @@ const char kReconnectSubmapsServiceName [] = "/reconnect_submaps";
 const char kPathPlanServiceName [] = "/plan_path";
 const int kFinishVersion = 180;
 const int kOccupyThreshhold = 64;
-//const int kMaxRRTNodeNum = 200;
-//const int kStepToCheckReachEndPoint = 25;
 const double kOccupyGridResolution = 0.05;
-//const double kDistance2ThresholdForAdding = 20.0;
-//const double kDistance2ThresholdForUpdating = 1.0;
-//const double kRotationThresholdForUpdating = 1.0;
 const double kProbabilityGridResolution = 0.05;
-//const double kProbabilityOfChooseEndPoint = 0.1;
-//const double kRRTGrowStep = 0.2;
-//const double kRRTTrimRadius = 5.0;
+const double kCloseSubmapRadius = 5.0;
     
 geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
     geometry_msgs::Point sum;
@@ -120,13 +112,13 @@ NavigationNode::NavigationNode(){
     SetParameters();
     submap_list_subscriber_ = node_handle_.subscribe<cartographer_ros_msgs::SubmapList>(kSubmapListTopicName,10, &NavigationNode::UpdateRoadMap,this);
     submap_query_client_ = node_handle_.serviceClient<cartographer_ros_msgs::SubmapQuery>(kSubmapQueryServiceName);
-
     roadmap_query_server_ = node_handle_.advertiseService(kRoadmapQueryServiceName,&NavigationNode::QueryRoadmap,this);
     connection_query_server_ = node_handle_.advertiseService(kConnectionQueryServiceName, &NavigationNode::QueryConnection,this);
     plan_path_server_ = node_handle_.advertiseService(kPathPlanServiceName,&NavigationNode::PlanPath,this);
     reconnect_submaps_server_ = node_handle_.advertiseService(kReconnectSubmapsServiceName, &NavigationNode::ReconnectSubmapService,this);
     srand (time(NULL));
 
+    
     // For test
     clicked_point_subscriber_ = node_handle_.subscribe<geometry_msgs::PointStamped>("/clicked_point",1,&NavigationNode::NavigateToClickedPoint, this);
     path_publisher_ = node_handle_.advertise<::nav_msgs::Path>("/test_path", 10);
@@ -167,7 +159,8 @@ void NavigationNode::SetParameters(){
 }
     
 // Return the cloest SubmapID if pose is free in this submap
-SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Point& point) {
+SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Point& point) const{
+    /*
     double min_distance = DBL_MAX;
     SubmapIndex cloest_submap = -1;
     for(auto& submap:submap_){
@@ -179,9 +172,21 @@ SubmapIndex NavigationNode::CloestSubmap(const geometry_msgs::Point& point) {
             cloest_submap = submap.first;
         }
     }
-    return cloest_submap;
+    return cloest_submap; */
+    return submap_kdtree_.NearestKdTreeNode(point)->submap_index;
 }
 
+std::vector<SubmapIndex> NavigationNode::CloseSubmaps(const geometry_msgs::Point& point, double radius) const{
+    const auto& near_nodes = submap_kdtree_.NearKdTreeNode(point, radius);
+    std::vector<SubmapIndex> close_submaps;
+    close_submaps.reserve(near_nodes.size());
+    for(const auto near_node:near_nodes){
+        close_submaps.push_back(near_node->submap_index);
+    }
+    return close_submaps;
+}
+    
+    
 // Add new submap grid to submap_grad_ using SubmapQuery
 void NavigationNode::AddSubmapGrid(SubmapIndex submap_index){
     // clear the old data
@@ -249,6 +254,17 @@ void NavigationNode::AddSubmapGrid(SubmapIndex submap_index){
 }
     
 // Return whether a point is free in a submap
+bool NavigationNode::IsFree(const geometry_msgs::Point& point) const{
+    auto& close_submaps = CloseSubmaps(point, kCloseSubmapRadius);
+    bool is_free = false;
+    for(auto submap_index:close_submaps){
+        int val = IsLocalFree(point,submap_index);
+        if(val>=kOccupyThreshhold) return false;
+        if(val>=0) is_free = true;
+    }
+    return is_free;
+}
+    
 int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use x & y in 2D case
                                 SubmapIndex submap_index) const{
     if(submap_grid_.count(submap_index)==1){
@@ -267,6 +283,21 @@ int NavigationNode::IsLocalFree(const geometry_msgs::Point& point,   // only use
     }
 }
 
+bool NavigationNode::IsPathFree(const geometry_msgs::Point& start_point,
+                                const geometry_msgs::Point& end_point) const{
+    auto& start_submap_indexes = CloseSubmaps(start_point, kCloseSubmapRadius);
+    auto& end_submap_indexes = CloseSubmaps(end_point, kCloseSubmapRadius);
+    std::unordered_set<SubmapIndex> union_submap_indexes;
+    for(SubmapIndex submap_index:start_submap_indexes){
+        union_submap_indexes.insert(submap_index);
+    }
+    for(SubmapIndex submap_index:end_submap_indexes){
+        union_submap_indexes.insert(submap_index);
+    }
+    std::vector<SubmapIndex> submap_indexes (union_submap_indexes.begin(),union_submap_indexes.end());
+    return IsPathLocalFree(start_point,end_point,submap_indexes);
+}
+    
 // Return whether a straight line between two points are free
 bool NavigationNode::IsPathLocalFree(const geometry_msgs::Point& start_point,
                                      const geometry_msgs::Point& end_point,
@@ -586,6 +617,7 @@ void NavigationNode::UpdateRoadMap(const cartographer_ros_msgs::SubmapList::Cons
         // add new finished submap into road_map_
         if(submap_.find(submap_index)==submap_.end()){
             submap_[submap_index] = submap_entry;
+            submap_kdtree_.AddPointToKdTree(submap_entry.pose.position, submap_index);
             AddSubmapGrid(submap_index);
             AddRoadMapEntry(submap_index);
         } else{
@@ -670,24 +702,6 @@ void NavigationNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::C
     std::cout<<departure<<" :: "<<submap_index<<", "<<IsLocalFree(msg->point,submap_index);
 }
     
-// print out the current state for testing and debugging
-void NavigationNode::PrintState(){
-    // print out submap_
-    for(const auto& submap_entry:submap_){
-        std::cout<<submap_entry.first<<": "
-        <<submap_entry.second.pose.position.x<<","
-        <<submap_entry.second.pose.position.y<<std::endl;
-    }
-    // print out road_map_
-    for(auto pair:road_map_){
-        std::cout<<pair.first<<": ";
-        for(auto connection:pair.second){
-            std::cout<<connection.first<<" ";
-        }
-        std::cout<<std::endl;
-    }
-}
-
 void NavigationNode::AddDisplayPath(Path path){
     path_to_display_.header.stamp = ::ros::Time::now();
     path_to_display_.header.frame_id = "/map";

@@ -11,6 +11,19 @@
 namespace cartographer_ros {
 namespace cartographer_ros_navigation{
 
+KdTreeNode::KdTreeNode() : parent_node(nullptr), distance (0.0), left_node(nullptr), right_node(nullptr), submap_index(0){
+    point.x = 0.0;
+    point.y = 0.0;
+    point.z = 0.0;
+}
+
+KdTreeNode::KdTreeNode(geometry_msgs::Point p) : point(p), parent_node(nullptr), distance (0.0),
+    left_node(nullptr), right_node(nullptr), submap_index(0){}
+
+KdTreeNode::KdTreeNode(geometry_msgs::Point p, int idx) : point(p), parent_node(nullptr), distance (0.0),
+    left_node(nullptr), right_node(nullptr), submap_index(idx){}
+    
+    
 // Return nearest node to target
 KdTreeNode* KdTree::NearestKdTreeNode(const geometry_msgs::Point& target) const {
     KdTreeNode* nearest_node = nullptr;
@@ -97,6 +110,12 @@ KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point){
     return AddPointToKdTree(point, root_, 0);
 }
 
+KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, int submap_index){
+    auto& added_node = AddPointToKdTree(point, root_, 0);
+    added_node->submap_index = submap_index;
+    return added_node;
+}
+
 // Recursively add the point into kd tree
 KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, KdTreeNode* parent, int depth){
     bool go_to_left = depth%2==0 ? point.x <= parent->point.x   // Compare x
@@ -119,6 +138,7 @@ KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, KdTreeNode* par
 }
 
 // Constructor
+KdTree::KdTree() : root_(new KdTreeNode ()){}
 KdTree::KdTree(geometry_msgs::Point start_point) : root_(new KdTreeNode (start_point)){}
 
 // Destroy RRT
