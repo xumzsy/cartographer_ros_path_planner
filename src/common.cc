@@ -1,8 +1,8 @@
-//
-//
-//
-//
-//
+/*
+ *
+ *
+ *
+ */
 
 
 #include "common.h"
@@ -20,8 +20,6 @@ double Distance2BetweenPose(const geometry_msgs::Pose& pose1, const geometry_msg
     (pose1.position.y-pose2.position.y)*(pose1.position.y-pose2.position.y)
     +(pose1.position.z-pose2.position.z)*(pose1.position.z-pose2.position.z);
 }
-    
-
     
 } // namespace cartographer_ros_navigation
 } // namespace cartographer_ros

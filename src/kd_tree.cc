@@ -18,10 +18,10 @@ KdTreeNode::KdTreeNode() : parent_node(nullptr), distance (0.0), left_node(nullp
 }
 
 KdTreeNode::KdTreeNode(geometry_msgs::Point p) : point(p), parent_node(nullptr), distance (0.0),
-    left_node(nullptr), right_node(nullptr), submap_index(0){}
+    left_node(nullptr), right_node(nullptr), trajectory_id,submap_index(0){}
 
-KdTreeNode::KdTreeNode(geometry_msgs::Point p, int idx) : point(p), parent_node(nullptr), distance (0.0),
-    left_node(nullptr), right_node(nullptr), submap_index(idx){}
+KdTreeNode::KdTreeNode(geometry_msgs::Point p, int trajectory_idx, int submap_idx) : point(p), parent_node(nullptr), distance (0.0),
+    left_node(nullptr), right_node(nullptr), trajectory_idx(trajectory_idx), submap_index(submap_idx){}
     
     
 // Return nearest node to target
@@ -110,8 +110,9 @@ KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point){
     return AddPointToKdTree(point, root_, 0);
 }
 
-KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, int submap_index){
+KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, int trajectory_idx, int submap_idx){
     auto added_node = AddPointToKdTree(point, root_, 0);
+    added_node->trajectory_id = trajectory_idx;
     added_node->submap_index = submap_index;
     return added_node;
 }

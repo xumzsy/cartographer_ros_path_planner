@@ -1,18 +1,14 @@
 /*
- Implement basic 2D (XY) kd tree for searching neigbbors used for
- RRT* method.
- 
- No balancing method is implemented. Node* parent is used for RRT and
- is not used in implement kd tree.
- 
- Further rebalance can be achieved.
+ * Author: Mengze Xu
+ * Implement 2d kd tree for quick near neighbor search in RRT and submaps.
+ *
+ * TODO: Add rebalance method and make the clss more unisersal
  */
 
 #ifndef kd_tree_h
 #define kd_tree_h
 
 #include <vector>
-
 #include "geometry_msgs/Point.h"
 
 namespace cartographer_ros {
@@ -21,14 +17,15 @@ namespace cartographer_ros_navigation{
 struct KdTreeNode{
     geometry_msgs::Point point;
     KdTreeNode* parent_node;        // Used for plan planning
-    double distance;                 // Used for plan planning
+    double distance;                // Used for plan planning
     KdTreeNode* left_node;          // Used for kd tree
     KdTreeNode* right_node;         // used for kd tree
-    int submap_index;               // usde for submaps
+    int trajectory_id;           // used for submaps
+    int submap_index;               // used for submaps
     
     KdTreeNode();
     KdTreeNode(geometry_msgs::Point p);
-    KdTreeNode(geometry_msgs::Point p, int idx);
+    KdTreeNode(geometry_msgs::Point p, int trajectory_idx, int submap_idx);
 };    
     
     
@@ -43,7 +40,7 @@ public:
     // Add a new point into RRT tree
     KdTreeNode* AddPointToKdTree(geometry_msgs::Point point);
     KdTreeNode* AddPointToKdTree(geometry_msgs::Point point, KdTreeNode* parent, int depth);
-    KdTreeNode* AddPointToKdTree(geometry_msgs::Point point, int submap_index);
+    KdTreeNode* AddPointToKdTree(geometry_msgs::Point point, int trajectory_idx, int submap_idx);
 
     // Constructor
     KdTree();

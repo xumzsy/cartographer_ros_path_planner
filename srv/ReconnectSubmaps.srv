@@ -1,3 +1,5 @@
+int32 start_trajectory_id
 int32 start_submap_index
+int32 end_trajectory_id
 int32 end_submap_index
 ---

@@ -1,6 +1,9 @@
+/*
+ * Author: Mengze Xu
+ */
+
 #include "ros/ros.h"
-#include "navigation_node.h"
-#include <iostream>
+#include "path_planner_node.h"
 
 int main(int argc, char** argv){
   ::ros::init(argc, argv, "cartographer_navigation_node");
