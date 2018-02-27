@@ -5,7 +5,7 @@ This package provides online 2D path planning based on cartographer submaps and 
 ### Prerequisites
 The package runs on Ubuntu 16.04 and ROS Kinetic.
 ### Installing
-* Follow [cartographer_ros](https://github.com/googlecartographer/cartographer_ros) to download cartogcartographer, cacartographer_ros and 2d demo.
+* Follow [cartographer_ros](https://github.com/googlecartographer/cartographer_ros) to download cartographer, cacartographer_ros and 2d demo.
 * Move files in "src" to cartographer_ros/cartographer_ros/cartographer_ros
 * Move files in "srv" to cartographer_ros/cartographer_ros_msgs/srv
 * Move files in "launch" to cartographer_ros/cartographer_ros/launch
@@ -42,6 +42,11 @@ I decompose the global path plan into three parts: locally plan paths to connect
 * probability_of_choose_endpoint. Probability to choose end point instead of random point as new point in RRT.
 * rrt_grow_step and rrt_trim_radius. Parameters in RRT* algorithm.
 
+## ROS API
+* "/roadmap_query": Receive the SubmapId and return corresponding submaps connections
+* "/connection_query": Receive two SubmapId and return the path in road map between them
+* "/reconnect_submaps": Receive two SubmapId, discard existing path and try to reconnect them
+* "/plan_path": Receive two geometry_msgs::Point and return a path connecting them
 ## C++ API
 path_planner_node.h is well documented and provides useful information
 
@@ -52,5 +57,7 @@ path_planner_node.h is well documented and provides useful information
 
 ### Navigation
 To work as navigation stack, continues real time localization and velocity controller are needed. Now cartographer supports pure localization as a new trajectory in map builder but has not provided ROS API.
+
 Velocity controller transforms trajectory of way points to smooth velocity command which can be directly sent to robot's motion controller.
+
 Since the submap are not perfect, dynamic navigation is desired. This however needs changes in cartographer and can not be implemented just in ROS.
