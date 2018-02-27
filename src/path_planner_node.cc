@@ -297,19 +297,28 @@ Path PathPlannerNode::PlanPathRRT(const SubmapId& start_id, const SubmapId& end_
 }
 
     
+    struct CustomPriorityCompare{
+        CustomPriorityCompare(std::map<SubmapId, double>& visited_submap_distance):submap_distance(visited_submap_distance) {}
+        bool operator ()(SubmapId a, SubmapId b){
+            return submap_distance[a]>submap_distance[b];
+        }
+    private:
+        std::map<SubmapId, double>& submap_distance;
+    }
 // Use BFS to connect two remote submaps
 Path PathPlannerNode::ConnectSubmap(const SubmapId& start_id, const SubmapId& end_id) const {
-    std::queue<SubmapId> submap_to_visit;
     std::map<SubmapId, double> visited_submap_distance;
     std::map<SubmapId, SubmapId> previous_submap;
+    std::priority_queue<SubmapId,std::vector<SubmapId>,
+                        CustomPriorityCompare(visited_submap_distance)> submap_to_visit;
     
     for(const auto& pair:submap_) visited_submap_distance[pair.first] = DBL_MAX;
-    submap_to_visit.push(start_id);
     visited_submap_distance[start_id] = 0.0;
+    submap_to_visit.push(start_id);
     bool find_end_id = false;
     
     while(!submap_to_visit.empty()&&!find_end_id){
-        auto current_submap = submap_to_visit.front();
+        auto current_submap = submap_to_visit.top();
         auto& current_connections = road_map_.find(current_submap)->second;
         for(const auto& entry:current_connections){
             if(entry.second.length + visited_submap_distance[current_submap] <
