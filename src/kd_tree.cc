@@ -1,6 +1,5 @@
 /*
- 
- 
+ * Author: Mengze Xu
  */
 
 #include <queue>
@@ -11,20 +10,23 @@
 namespace cartographer_ros {
 namespace cartographer_ros_navigation{
 
-KdTreeNode::KdTreeNode() : parent_node(nullptr), distance (0.0), left_node(nullptr), right_node(nullptr), submap_index(0){
+// Constructor for KdTreeNode
+KdTreeNode::KdTreeNode() : parent_node(nullptr), distance (0.0), left_node(nullptr), right_node(nullptr),
+                           trajectory_id(0), submap_index(0){
     point.x = 0.0;
     point.y = 0.0;
     point.z = 0.0;
 }
 
 KdTreeNode::KdTreeNode(geometry_msgs::Point p) : point(p), parent_node(nullptr), distance (0.0),
-    left_node(nullptr), right_node(nullptr), trajectory_id,submap_index(0){}
+    left_node(nullptr), right_node(nullptr), trajectory_id(0), submap_index(0){}
 
-KdTreeNode::KdTreeNode(geometry_msgs::Point p, int trajectory_idx, int submap_idx) : point(p), parent_node(nullptr), distance (0.0),
-    left_node(nullptr), right_node(nullptr), trajectory_idx(trajectory_idx), submap_index(submap_idx){}
+KdTreeNode::KdTreeNode(geometry_msgs::Point p, int trajectory_idx, int submap_idx) : point(p),
+    parent_node(nullptr), distance (0.0), left_node(nullptr), right_node(nullptr),
+    trajectory_idx(trajectory_idx), submap_index(submap_idx){}
     
     
-// Return nearest node to target
+// Return nearest node to target point
 KdTreeNode* KdTree::NearestKdTreeNode(const geometry_msgs::Point& target) const {
     KdTreeNode* nearest_node = nullptr;
     double closest_distance2 = DBL_MAX;

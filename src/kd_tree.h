@@ -20,7 +20,7 @@ struct KdTreeNode{
     double distance;                // Used for plan planning
     KdTreeNode* left_node;          // Used for kd tree
     KdTreeNode* right_node;         // used for kd tree
-    int trajectory_id;           // used for submaps
+    int trajectory_id;              // used for submaps
     int submap_index;               // used for submaps
     
     KdTreeNode();
@@ -35,7 +35,8 @@ public:
     KdTreeNode* NearestKdTreeNode(const geometry_msgs::Point& target) const;
     
     // Return near nodes around target within radius
-    std::vector<KdTreeNode*> NearKdTreeNode(const geometry_msgs::Point& target, double radius) const;
+    std::vector<KdTreeNode*> NearKdTreeNode(const geometry_msgs::Point& target,
+                                            double radius) const;
     
     // Add a new point into RRT tree
     KdTreeNode* AddPointToKdTree(geometry_msgs::Point point);
