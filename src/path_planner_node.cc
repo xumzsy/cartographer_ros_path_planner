@@ -39,7 +39,7 @@ const char kConnectionQueryServiceName [] = "/connection_query";
 const char kReconnectSubmapsServiceName [] = "/reconnect_submaps";
 const char kPathPlanServiceName [] = "/plan_path";
 const int kFinishVersion = 180;
-const int kOccupyThreshhold = 64;
+const int kOccupyThreshold = 64;
 const double kOccupyGridResolution = 0.05;
 const double kProbabilityGridResolution = 0.05;
 const double kCloseSubmapRadius = 5.0;
@@ -79,7 +79,7 @@ double RotationBetweenPose(const geometry_msgs::Pose& pose1, const geometry_msgs
 
 // Judge intensity val free or not
 bool IsValueFree(int val){
-    return 0<=val && val<kOccupyThreshhold;
+    return 0<=val && val<kOccupyThreshold;
 }
     
 // Calculate L2 length of the path
@@ -167,7 +167,7 @@ bool PathPlannerNode::IsFree(const geometry_msgs::Point& point) const{
     bool is_free = false;
     for(const auto& submap_id:close_submaps){
         int val = GetPointIntensity(point,submap_id);
-        if(val>=kOccupyThreshhold) return false;
+        if(val>=kOccupyThreshold) return false;
         if(val>=0) is_free = true;
     }
     return is_free;
@@ -184,7 +184,7 @@ bool PathPlannerNode::IsPathLocalFree(const geometry_msgs::Point& start_point,
         bool is_free = false;
         for(const auto& submap_id:submap_ids){
             int val = GetPointIntensity(point, submap_id);
-            if(val>=kOccupyThreshhold) return false;
+            if(val>=kOccupyThreshold) return false;
             if(val>=0) is_free = true;
         }
         if(!is_free) return false;
@@ -439,7 +439,7 @@ geometry_msgs::Point PathPlannerNode::RandomFreePoint(const std::vector<SubmapId
         int random_x = rand() % (submap_grid.width);
         int random_y = rand() % (submap_grid.height);
         int val = submap_grid.data[random_y * submap_grid.width + random_x];
-        if(val>=0 && val<kOccupyThreshhold){
+        if(val>=0 && val<kOccupyThreshold){
             geometry_msgs::Point point;
             point.x = random_x * submap_grid.resolution + submap_grid.x0;
             point.y = random_y * submap_grid.resolution + submap_grid.y0;
@@ -448,7 +448,7 @@ geometry_msgs::Point PathPlannerNode::RandomFreePoint(const std::vector<SubmapId
             // check if there's conflict in other submap
             bool is_free = true;
             for(auto other_submap:submap_ids){
-                if(GetPointIntensity(point,other_submap)>=kOccupyThreshhold){
+                if(GetPointIntensity(point,other_submap)>=kOccupyThreshold){
                     is_free = false;
                     break;
                 }
