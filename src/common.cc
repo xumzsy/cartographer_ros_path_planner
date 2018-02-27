@@ -8,7 +8,7 @@
 #include "common.h"
 
 namespace cartographer_ros {
-namespace cartographer_ros_navigation{
+namespace cartographer_ros_path_planner{
 
 // Return distance2 in XY plane
 double Distance2BetweenPoint(const geometry_msgs::Point& point1, const geometry_msgs::Point& point2){
@@ -21,5 +21,5 @@ double Distance2BetweenPose(const geometry_msgs::Pose& pose1, const geometry_msg
     +(pose1.position.z-pose2.position.z)*(pose1.position.z-pose2.position.z);
 }
     
-} // namespace cartographer_ros_navigation
+} // namespace cartographer_ros_path_planner
 } // namespace cartographer_ros

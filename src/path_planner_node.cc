@@ -9,7 +9,7 @@
 #include <set>
 #include <stdlib.h>
 #include <time.h>
-#include <unordered_set>
+#include <set>
 
 #include "Eigen/Core"
 #include "Eigen/Geometry"
@@ -42,7 +42,6 @@ const int kFinishVersion = 180;
 const int kOccupyThreshold = 64;
 const double kOccupyGridResolution = 0.05;
 const double kProbabilityGridResolution = 0.05;
-const double kCloseSubmapRadius = 5.0;
     
 // Define add and scalar multiplication for Point
 geometry_msgs::Point operator+(const geometry_msgs::Point& a, const geometry_msgs::Point& b){
@@ -140,6 +139,11 @@ void PathPlannerNode::SetParameters(){
     if(!node_handle_.getParam("rrt_trim_radius" ,parameters_.rrt_trim_radius)){
         std::cout<<"Error! Fail to get paramter: rrt_trim_radius"<<std::endl;
     }
+    if(!node_handle_.getParam("close_submap_radius" ,parameters_.close_submap_radius)){
+        std::cout<<"Error! Fail to get paramter: close_submap_radius"<<std::endl;
+    }
+
+
 }
     
     
@@ -163,7 +167,7 @@ int PathPlannerNode::GetPointIntensity(const geometry_msgs::Point& point,
     
     
 bool PathPlannerNode::IsFree(const geometry_msgs::Point& point) const{
-    auto close_submaps = CloseSubmaps(point, kCloseSubmapRadius);
+    auto close_submaps = CloseSubmaps(point, parameters_.close_submap_radius);
     bool is_free = false;
     for(const auto& submap_id:close_submaps){
         int val = GetPointIntensity(point,submap_id);
@@ -195,7 +199,7 @@ bool PathPlannerNode::IsPathLocalFree(const geometry_msgs::Point& start_point,
     
 SubmapId PathPlannerNode::ClosestSubmap(const geometry_msgs::Point& point) const{
     const auto nearest_node = submap_kdtree_.NearestKdTreeNode(point);
-    return SubmapId {nearest_node->trajectory_id,nearest_node->submap_id};
+    return SubmapId {nearest_node->trajectory_id,nearest_node->submap_index};
 }
 
     
@@ -205,14 +209,15 @@ std::vector<SubmapId> PathPlannerNode::CloseSubmaps(const geometry_msgs::Point& 
     std::vector<SubmapId> close_submaps;
     close_submaps.reserve(near_nodes.size());
     for(const auto near_node:near_nodes){
-        close_submaps.emplace_back(near_node->trajectory_id,near_node->submap_id);
+        SubmapId submap_id {near_node->trajectory_id,near_node->submap_index};
+        close_submaps.push_back(std::move(submap_id));
     }
     return close_submaps;
 }
     
     
 Path PathPlannerNode::PlanPathRRT(const geometry_msgs::Point& start_point,
-                                  const geometry_msgs::Point& end_point) {
+                                  const geometry_msgs::Point& end_point) const {
     // Check start and end point is free
     if(!IsFree(start_point)){
         std::cout<<"Start point is occupied!"<<std::endl;
@@ -233,12 +238,11 @@ Path PathPlannerNode::PlanPathRRT(const geometry_msgs::Point& start_point,
     // If start and end point are in the same submap, directly plan path in the submap
     if(start_submap_id==end_submap_id){
         path = LocalPlanPathRRT(start_point,end_point);
-        AddDisplayPath(path);
         return path;
     }
     
     // Connect start point and the origin of start submap
-    Path start_path = LocalPlanPathRRT(start_point,submap_[start_submap_id].pose.position);
+    Path start_path = LocalPlanPathRRT(start_point,submap_.find(start_submap_id)->second.pose.position);
     if(!start_path.empty()){
         path.insert(path.end(),start_path.begin(),start_path.end());
     } else{
@@ -256,35 +260,45 @@ Path PathPlannerNode::PlanPathRRT(const geometry_msgs::Point& start_point,
     }
     
     // Connect end_submap to end point
-    auto end_path = LocalPlanPathRRT(submap_[end_submap_id].pose.position,end_point);
-    if(!endpath.empty()){
+    auto end_path = LocalPlanPathRRT(submap_.find(end_submap_id)->second.pose.position,end_point);
+    if(!end_path.empty()){
         path.insert(path.end(),end_path.begin(),end_path.end());
     } else{
         std::cout<<" Fail to connect end point to end_submap"<<std::endl;
         return {};
     }
     std::cout<<"Successfully find a path!"<<std::endl;
-    AddDisplayPath(path);
     return path;
 }
     
     
-Path PathPlannerNode::PlanPathRRT(const SubmapId& start_id, const SubmapId& end_id){
+Path PathPlannerNode::PlanPathRRT(const SubmapId& start_id, const SubmapId& end_id) const {
     std::cout<<"Try to connect two submaps:"<<start_id<<","<<end_id<<std::endl;
-    geometry_msgs::Point start_point = submap_[start_id].pose.position;
-    geometry_msgs::Point end_point = submap_[end_id].pose.position;
+    const auto start_submap = submap_.find(start_id);
+    const auto end_submap = submap_.find(end_id);
+    if(start_submap==submap_.end()){
+        std::cout<<"Submap "<<start_id<<" not exist!"<<std::endl;
+        return {};
+    }
+    if(end_submap==submap_.end()){
+        std::cout<<"Submap "<<end_id<<" not exist!"<<std::endl;
+        return {};
+    }
+
+    geometry_msgs::Point start_point = start_submap->second.pose.position;
+    geometry_msgs::Point end_point = end_submap->second.pose.position;
     Path path = LocalPlanPathRRT(start_point, end_point);
     if(!path.empty()){
-        std::cout<<"Successfully connect submap "<<start_id<<" and "<<end_id<<endl;
+        std::cout<<"Successfully connect submap "<<start_id<<" and "<<end_id<<std::endl;
     } else{
-        std::cout<<"Fail to connect submap "<<start_id<<" and "<<end_id<<endl;
+        std::cout<<"Fail to connect submap "<<start_id<<" and "<<end_id<<std::endl;
     }
     return path;
 }
 
     
 // Use BFS to connect two remote submaps
-Path PathPlannerNode::ConnectSubmap(SubmapId start_id, SubmapId end_id){
+Path PathPlannerNode::ConnectSubmap(const SubmapId& start_id, const SubmapId& end_id) const {
     std::queue<SubmapId> submap_to_visit;
     std::map<SubmapId, double> visited_submap_distance;
     std::map<SubmapId, SubmapId> previous_submap;
@@ -296,7 +310,7 @@ Path PathPlannerNode::ConnectSubmap(SubmapId start_id, SubmapId end_id){
     
     while(!submap_to_visit.empty()&&!find_end_id){
         auto current_submap = submap_to_visit.front();
-        auto& current_connections = road_map_[current_submap];
+        auto& current_connections = road_map_.find(current_submap)->second;
         for(const auto& entry:current_connections){
             if(entry.second.length + visited_submap_distance[current_submap] <
                visited_submap_distance[entry.first]){
@@ -317,7 +331,7 @@ Path PathPlannerNode::ConnectSubmap(SubmapId start_id, SubmapId end_id){
     while(previous_submap.count(id)==1){
         SubmapId previous_id = previous_submap[id];
         if(previous_submap.count(previous_id)==1){
-            auto connection = road_map_[previous_id][id];
+            auto connection = road_map_.find(previous_id)->second.find(id)->second;
             path.insert(path.begin(),connection.path.begin(),connection.path.end());
         }
         id = previous_submap[id];
@@ -328,14 +342,14 @@ Path PathPlannerNode::ConnectSubmap(SubmapId start_id, SubmapId end_id){
     
 // Use RRT* to do local planning
 Path PathPlannerNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
-                                       const geometry_msgs::Point& end_point){
+                                       const geometry_msgs::Point& end_point) const{
     SubmapId start_submap_id = ClosestSubmap(start_point);
     SubmapId end_submap_id = ClosestSubmap(end_point);
     
     // Find local submaps used in later planning
-    auto start_submap_ids = CloseSubmaps(start_point, kCloseSubmapRadius);
-    auto end_submap_ids = CloseSubmaps(end_point, kCloseSubmapRadius);
-    std::unordered_set<SubmapId> union_submap_ids;
+    auto start_submap_ids = CloseSubmaps(start_point, parameters_.close_submap_radius);
+    auto end_submap_ids = CloseSubmaps(end_point, parameters_.close_submap_radius);
+    std::set<SubmapId> union_submap_ids;
     for(SubmapId& submap_id:start_submap_ids){
         union_submap_ids.insert(submap_id);
     }
@@ -413,7 +427,7 @@ Path PathPlannerNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
 }
     
     
-void PathPlannerNode::AddDisplayPath(Path path){
+void PathPlannerNode::AddDisplayPath(const Path& path){
     path_to_display_.header.stamp = ::ros::Time::now();
     path_to_display_.header.frame_id = "/map";
     path_to_display_.poses.clear();
@@ -432,7 +446,7 @@ void PathPlannerNode::AddDisplayPath(Path path){
     
     
 // Return a random free point in given submaps
-geometry_msgs::Point PathPlannerNode::RandomFreePoint(const std::vector<SubmapId>& submap_ids){
+geometry_msgs::Point PathPlannerNode::RandomFreePoint(const std::vector<SubmapId>& submap_ids) const {
     while(true){
         int random_id = rand() % submap_ids.size();
         auto& submap_grid = submap_grid_.find(submap_ids[random_id])->second;
@@ -545,37 +559,41 @@ void PathPlannerNode::AddRoadMapEntry(const SubmapId& submap_id){
     if(submap_entry.submap_version!=kFinishVersion) return;
     
     // Find neigbor submaps that are potential for adding
-    auto near_submaps = CloseSubmaps(submap_entry.pose.point, parameters_.distance_threshold_for_adding);
-    near_submaps.emplace_back(submap_id.trajectory_id,submap_id.submap_index-1);
-    near_submaps.emplace_back(submap_id.trajectory_id,submap_id.submap_index+1);
+    std::vector<SubmapId> near_submaps = CloseSubmaps(submap_entry.pose.position, parameters_.distance_threshold_for_adding);
+    SubmapId next_submap {submap_id.trajectory_id,submap_id.submap_index+1};
+    SubmapId last_submap {submap_id.trajectory_id,submap_id.submap_index+1};
+
+    near_submaps.push_back(std::move(next_submap));
+    near_submaps.push_back(std::move(last_submap));
+
     for(auto& near_submap:near_submaps){
         // Check near_submap exists and is not submap itself
         if(submap_.count(near_submap)==0) continue;
-        auto& other_submap_entry = submap_[near_submap];
-        if(other_submap_entry.submap_id==submap_entry.submap_id) continue;
+        if(near_submap==submap_id) continue;
         
         // Connect two submpas
-        Path path = PlanPathRRT(submap_entry.submap_id,other_submap_entry.submap_id);
+        Path path = PlanPathRRT(submap_id,near_submap);
         
         if(path.empty()){
-            std::cout<<"Warning!! Fail to connect "<<submap_entry.submap_id<<" , "<<other_submap_entry.submap_id<<std::endl;
+            std::cout<<"Warning!! Fail to connect "<<submap_id<<" , "<<near_submap<<std::endl;
             continue;
         }
         
         // Add path into road_map
         double path_length = LengthOfPath(path);
-        SubmapConnectState submap_connect_state (submap_entry.submap_id,
-                                                 other_submap_entry.submap_id,
+        
+        SubmapConnectState submap_connect_state (submap_id,
+                                                 near_submap,
                                                  path_length);
-        SubmapConnectState other_submap_connect_state (other_submap_entry.submap_id,
-                                                       submap_entry.submap_id,
+        SubmapConnectState other_submap_connect_state (near_submap,
+                                                       submap_id,
                                                        path_length);
         
         submap_connect_state.path = path;
         std::reverse(path.begin(),path.end());
         other_submap_connect_state.path = std::move(path);
-        road_map_[submap_entry.submap_id][other_submap_entry.submap_id] = std::move(submap_connect_state);
-        road_map_[other_submap_entry.submap_id][submap_entry.submap_id] = std::move(other_submap_connect_state);
+        road_map_[submap_id][near_submap] = std::move(submap_connect_state);
+        road_map_[near_submap][submap_id] = std::move(other_submap_connect_state);
     }
 }
     
@@ -613,22 +631,23 @@ bool PathPlannerNode::ReconnectSubmapService(::cartographer_ros_msgs::ReconnectS
                                              ::cartographer_ros_msgs::ReconnectSubmaps::Response &res){
     SubmapId start_submap_id {req.start_trajectory_id, req.start_submap_index};
     SubmapId end_submap_id {req.end_trajectory_id, req.end_submap_index};
-    ReconnectSubmaps(req.start_submap_id,req.end_submap_id);
+    ReconnectSubmaps(start_submap_id,end_submap_id);
     return true;
 }
     
 bool PathPlannerNode::QueryRoadmap(::cartographer_ros_msgs::RoadmapQuery::Request &req,
                                   ::cartographer_ros_msgs::RoadmapQuery::Response &res){
     SubmapId submap_id {req.trajectory_id, req.submap_index};
-    const auto& pair = road_map_.find(req.submap_id);
+    const auto& pair = road_map_.find(submap_id);
     if(pair==road_map_.end()){
-        std::cout<<"Submap "<<req.submap_id<<" do not exist!"<<std::endl;
+        std::cout<<"Submap "<<submap_id<<" do not exist!"<<std::endl;
         return true;
     }
-    std::cout<<"Submap "<<req.submap_id<<" Connections: ";
+    std::cout<<"Submap "<<submap_id<<" Connections: ";
     for(const auto& connection_state:pair->second){
         std::cout<<connection_state.first<<" ";
-        res.connections.push_back(connection_state.first);
+        res.connections.push_back(connection_state.first.trajectory_id);
+        res.connections.push_back(connection_state.first.submap_index);
     }
     std::cout<<std::endl;
     return true;
@@ -640,7 +659,7 @@ bool PathPlannerNode::QueryConnection(cartographer_ros_msgs::ConnectionQuery::Re
     SubmapId end_submap_id {req.end_trajectory_id, req.end_submap_index};
     const auto& pair = road_map_.find(start_submap_id);
     if(pair==road_map_.end()){
-        std::cout<<"Submap "<<req.start_submap_id<<" do not exist!"<<std::endl;
+        std::cout<<"Submap "<<start_submap_id<<" do not exist!"<<std::endl;
         return true;
     }
     const auto& entry = pair->second.find(end_submap_id);
@@ -652,10 +671,11 @@ bool PathPlannerNode::QueryConnection(cartographer_ros_msgs::ConnectionQuery::Re
 }
     
 bool PathPlannerNode::PlanPath(cartographer_ros_msgs::PathPlan::Request &req,
-                              cartographer_ros_msgs::PathPlan::Response &res) {
+                              cartographer_ros_msgs::PathPlan::Response &res)  {
     geometry_msgs::Point start_point = req.start_point;
     geometry_msgs::Point end_point = req.end_point;
     res.path = PlanPathRRT(start_point,end_point);
+    if(!res.path.empty()) AddDisplayPath(res.path);
     return true;
 }
     
@@ -669,7 +689,7 @@ Functions below are for test
 
 void PathPlannerNode::IsClickedPointFree(const geometry_msgs::PointStamped::ConstPtr& msg) const {
     //std::cout<<msg->point.x<<","<<msg->point.y<<":";
-    std::cout<<GetPointIntensity(msg->point,0);
+    std::cout<<IsFree(msg->point);
     std::cout<<std::endl;
 }
 
@@ -679,13 +699,15 @@ void PathPlannerNode::NavigateToClickedPoint(const geometry_msgs::PointStamped::
     departure.x = 0.01;
     departure.y = 0.01;
     departure.z = 0.0;
-    if(PlanPathRRT(departure,msg->point).empty()){
+    Path path = PlanPathRRT(departure,msg->point);
+    if(path.empty()){
         std::cout<<"Fail to find a valid path!"<<std::endl;
         SubmapId submap_id = ClosestSubmap(msg->point);
-        std::cout<<departure<<" :: "<<submap_id<<", "<<GetPointIntensity(msg->point,submap_id);
+        std::cout<<departure<<" :: "<<submap_id<<", "<<GetPointIntensity(msg->point,submap_id)<<std::endl;
     }
+    AddDisplayPath(path);
     SubmapId submap_id = ClosestSubmap(msg->point);
-    std::cout<<departure<<" :: "<<submap_id<<", "<<GetPointIntensity(msg->point,submap_id);
+    std::cout<<departure<<" :: "<<submap_id<<", "<<GetPointIntensity(msg->point,submap_id)<<std::endl;
 }
     
 

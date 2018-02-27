@@ -41,6 +41,8 @@ struct Parameters{
     double probability_of_choose_endpoint;
     double rrt_grow_step;
     double rrt_trim_radius;
+    double close_submap_radius;
+
 };
     
 // Core Node provide path plan for cartographer
@@ -62,7 +64,7 @@ public:
     // val: -1 for unobserved or out of submap range
     //       0 for definitely free and 100 for definitely occupied.
     int GetPointIntensity(const geometry_msgs::Point& point,
-                          const SubmapId submap_id) const;
+                          const SubmapId& submap_id) const;
     
     
     // Return whether a point in global map frame is free or not
@@ -85,26 +87,26 @@ public:
     
     // Return a free path from start point to end point using RRT*
     Path PlanPathRRT(const geometry_msgs::Point& start,
-                     const geometry_msgs::Point& end);
+                     const geometry_msgs::Point& end) const;
     
     // Return a free path between two submaps' origin using RRT*
-    Path PlanPathRRT(const SubmapId& start_id, const SubmapId& end_id);
+    Path PlanPathRRT(const SubmapId& start_id, const SubmapId& end_id) const;
     
     // Returan a path connecting two remote submaps using graph search
-    Path ConnectSubmap(const SubmapId& start_id, const SubmapId& end_id);
+    Path ConnectSubmap(const SubmapId& start_id, const SubmapId& end_id) const;
     
     // Return a path between two points. It's' supposed that the submaps
     // that the points are located are directly connected
     Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
-                          const geometry_msgs::Point& end_point);
+                          const geometry_msgs::Point& end_point) const;
     
     // Return a path between two points in given submaps
     Path LocalPlanPathRRT(const geometry_msgs::Point& start_point,
                           const geometry_msgs::Point& end_point,
-                          const std::vector<SubmapId> submap_ids);
+                          const std::vector<SubmapId>& submap_ids) const;
     
     // Publish and display the path in RVIZ
-    void AddDisplayPath(Path path);
+    void AddDisplayPath(const Path& path);
     
 private:
     struct SubmapConnectState{

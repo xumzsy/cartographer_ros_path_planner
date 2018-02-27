@@ -8,7 +8,7 @@
 #include "kd_tree.h"
 
 namespace cartographer_ros {
-namespace cartographer_ros_navigation{
+namespace cartographer_ros_path_planner{
 
 // Constructor for KdTreeNode
 KdTreeNode::KdTreeNode() : parent_node(nullptr), distance (0.0), left_node(nullptr), right_node(nullptr),
@@ -23,7 +23,7 @@ KdTreeNode::KdTreeNode(geometry_msgs::Point p) : point(p), parent_node(nullptr),
 
 KdTreeNode::KdTreeNode(geometry_msgs::Point p, int trajectory_idx, int submap_idx) : point(p),
     parent_node(nullptr), distance (0.0), left_node(nullptr), right_node(nullptr),
-    trajectory_idx(trajectory_idx), submap_index(submap_idx){}
+    trajectory_id(trajectory_idx), submap_index(submap_idx){}
     
     
 // Return nearest node to target point
@@ -115,7 +115,7 @@ KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point){
 KdTreeNode* KdTree::AddPointToKdTree(geometry_msgs::Point point, int trajectory_idx, int submap_idx){
     auto added_node = AddPointToKdTree(point, root_, 0);
     added_node->trajectory_id = trajectory_idx;
-    added_node->submap_index = submap_index;
+    added_node->submap_index = submap_idx;
     return added_node;
 }
 
@@ -190,6 +190,6 @@ std::vector<KdTreeNode*> KdTree::BruceNearKdTreeNode(const geometry_msgs::Point&
     return bruce_near_nodes;
 }
     
-} // namespace cartographer_ros_navigation
+} // namespace cartographer_ros_path_planner
 } // namespace cartographer_ros
 

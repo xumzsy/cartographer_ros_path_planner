@@ -12,7 +12,7 @@
 #include "geometry_msgs/Point.h"
 
 namespace cartographer_ros {
-namespace cartographer_ros_navigation{
+namespace cartographer_ros_path_planner{
     
 struct KdTreeNode{
     geometry_msgs::Point point;
@@ -71,7 +71,7 @@ private:
     KdTreeNode* const root_;
 };
 
-} // namespace cartographer_ros_navigation
+} // namespace cartographer_ros_path_planner
 } // namespace cartographer_ros
 
 #endif /* kd_tree_h */
