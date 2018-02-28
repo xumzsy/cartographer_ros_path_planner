@@ -1,6 +1,7 @@
 # Cartographer ROS Path Planner
 This package provides online 2D path planning based on cartographer submaps and does not rely on the global occupied grid. Main idea is to build up a global road map for submaps and use RRT* as local planner.
 
+![Example image](cartographer_ros_path_planner/example.png)
 ## Getting Started
 ### Prerequisites
 The package runs on Ubuntu 16.04 and ROS Kinetic.
