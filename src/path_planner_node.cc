@@ -90,7 +90,15 @@ double LengthOfPath(const Path& path){
     }
     return length;
 }
-  
+ 
+struct CustomPriorityCompare{
+    CustomPriorityCompare(std::map<SubmapId, double>& visited_submap_distance):submap_distance(visited_submap_distance) {}
+    bool operator ()(const SubmapId& a, const SubmapId& b){
+        return submap_distance[a]>submap_distance[b];
+    }
+private:
+    std::map<SubmapId, double>& submap_distance;
+}; 
 } // namespace
 
 
@@ -218,6 +226,7 @@ std::vector<SubmapId> PathPlannerNode::CloseSubmaps(const geometry_msgs::Point& 
     
 Path PathPlannerNode::PlanPathRRT(const geometry_msgs::Point& start_point,
                                   const geometry_msgs::Point& end_point) const {
+    ::ros::WallTime begin_time = ::ros::WallTime::now();
     // Check start and end point is free
     if(!IsFree(start_point)){
         std::cout<<"Start point is occupied!"<<std::endl;
@@ -267,7 +276,9 @@ Path PathPlannerNode::PlanPathRRT(const geometry_msgs::Point& start_point,
         std::cout<<" Fail to connect end point to end_submap"<<std::endl;
         return {};
     }
-    std::cout<<"Successfully find a path!"<<std::endl;
+    ::ros::WallTime end_time = ::ros::WallTime::now();
+    long int used_time_ns = (end_time.sec-begin_time.sec)*1000000000+(end_time.nsec-begin_time.nsec);
+    std::cout<<"Successfully find a path! It took "<<used_time_ns<<" ns."<<std::endl;
     return path;
 }
     
@@ -297,20 +308,14 @@ Path PathPlannerNode::PlanPathRRT(const SubmapId& start_id, const SubmapId& end_
 }
 
     
-    struct CustomPriorityCompare{
-        CustomPriorityCompare(std::map<SubmapId, double>& visited_submap_distance):submap_distance(visited_submap_distance) {}
-        bool operator ()(SubmapId a, SubmapId b){
-            return submap_distance[a]>submap_distance[b];
-        }
-    private:
-        std::map<SubmapId, double>& submap_distance;
-    }
+    
+
 // Use BFS to connect two remote submaps
 Path PathPlannerNode::ConnectSubmap(const SubmapId& start_id, const SubmapId& end_id) const {
     std::map<SubmapId, double> visited_submap_distance;
     std::map<SubmapId, SubmapId> previous_submap;
     std::priority_queue<SubmapId,std::vector<SubmapId>,
-                        CustomPriorityCompare(visited_submap_distance)> submap_to_visit;
+                        CustomPriorityCompare> submap_to_visit (visited_submap_distance);
     
     for(const auto& pair:submap_) visited_submap_distance[pair.first] = DBL_MAX;
     visited_submap_distance[start_id] = 0.0;
@@ -318,7 +323,8 @@ Path PathPlannerNode::ConnectSubmap(const SubmapId& start_id, const SubmapId& en
     bool find_end_id = false;
     
     while(!submap_to_visit.empty()&&!find_end_id){
-        auto current_submap = submap_to_visit.top();
+        SubmapId current_submap = submap_to_visit.top();
+        submap_to_visit.pop();
         auto& current_connections = road_map_.find(current_submap)->second;
         for(const auto& entry:current_connections){
             if(entry.second.length + visited_submap_distance[current_submap] <
@@ -329,7 +335,7 @@ Path PathPlannerNode::ConnectSubmap(const SubmapId& start_id, const SubmapId& en
                 if(entry.first==end_id) {find_end_id = true;break;}
             }
         }
-        submap_to_visit.pop();
+        
     }
     
     if(previous_submap.count(end_id)==0){
@@ -418,7 +424,7 @@ Path PathPlannerNode::LocalPlanPathRRT(const geometry_msgs::Point& start_point,
         
         // Try to connect RRT and end point
         if(node_num % parameters_.step_to_check_reach_endpoint == 0){
-            std::cout<<"Try to connect End point! Node Num:"<<node_num<<std::endl;
+            //std::cout<<"Try to connect End point! Node Num:"<<node_num<<std::endl;
             const KdTreeNode* path_node = kd_tree.NearestKdTreeNode(end_point);
             if(IsPathLocalFree(path_node->point,end_point,submap_ids)){
                 // find the path!
