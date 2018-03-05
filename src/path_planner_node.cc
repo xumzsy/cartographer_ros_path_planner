@@ -93,10 +93,12 @@ double LengthOfPath(const Path& path){
  
     // Heuristic h = L2 distance
 struct CustomPriorityCompare{
-    CustomPriorityCompare(std::map<SubmapId, double>& visited_submap_distance, const std::map<SubmapId, cartographer_ros_msgs::SubmapEntry>& submap_, SubmapId end_id): submap_distance(visited_submap_distance), submap_list(submap_){goal = submap_list.find(end_id)->second.pose.position;}
+    CustomPriorityCompare(std::map<SubmapId, double>& visited_submap_distance, const std::map<SubmapId, 
+                          cartographer_ros_msgs::SubmapEntry>& submap_, SubmapId end_id): 
+                          submap_distance(visited_submap_distance), submap_list(submap_){goal = submap_list.find(end_id)->second.pose.position;}
     bool operator ()(const SubmapId& a, const SubmapId& b) {
-        double h_a = sqrt(Distance2BetweenPose(submap_list.find(a)->second->pose.position, goal));
-        double h_a = sqrt(Distance2BetweenPose(submap_list.find(b)->second->pose.position, goal));
+        double h_a = sqrt(Distance2BetweenPoint(submap_list.find(a)->second.pose.position, goal));
+        double h_b = sqrt(Distance2BetweenPoint(submap_list.find(b)->second.pose.position, goal));
         return submap_distance[a] + h_a > submap_distance[b] + h_b;
     }
 private:
@@ -320,7 +322,7 @@ Path PathPlannerNode::ConnectSubmap(const SubmapId& start_id, const SubmapId& en
     std::map<SubmapId, double> visited_submap_distance;
     std::map<SubmapId, SubmapId> previous_submap;
     std::priority_queue<SubmapId,std::vector<SubmapId>,
-                        CustomPriorityCompare> submap_to_visit ((visited_submap_distance, submap_, end_id));
+                        CustomPriorityCompare> submap_to_visit ({visited_submap_distance, submap_, end_id});
     
     for(const auto& pair:submap_) visited_submap_distance[pair.first] = DBL_MAX;
     visited_submap_distance[start_id] = 0.0;
